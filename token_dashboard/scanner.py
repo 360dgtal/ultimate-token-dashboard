@@ -92,7 +92,7 @@ def _extract_tools(rec: dict) -> List[dict]:
             "target":        target,
             "result_tokens": None,
             "is_error":      0,
-            "timestamp":     rec.get("timestamp"),
+            "timestamp":     rec.get("timestamp") or rec.get("_audit_timestamp"),
         })
     return out
 
@@ -117,19 +117,23 @@ def _extract_results(rec: dict) -> List[dict]:
             "target":        block.get("tool_use_id"),
             "result_tokens": chars // 4,
             "is_error":      1 if block.get("is_error") else 0,
-            "timestamp":     rec.get("timestamp"),
+            "timestamp":     rec.get("timestamp") or rec.get("_audit_timestamp"),
         })
     return out
 
 
 def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
-    """Return (message_row, [tool_call_rows])."""
+    """Return (message_row, [tool_call_rows]).
+
+    Handles both standard Claude Code JSONL (camelCase keys, ``timestamp``)
+    and Cowork audit.jsonl (snake_case keys, ``_audit_timestamp``).
+    """
     msg_obj = rec.get("message") or {}
     text, chars = _prompt_text(rec)
     msg = {
         "uuid":         rec.get("uuid"),
         "parent_uuid":  rec.get("parentUuid"),
-        "session_id":   rec.get("sessionId"),
+        "session_id":   rec.get("sessionId") or rec.get("session_id"),
         "project_slug": project_slug,
         "cwd":          rec.get("cwd"),
         "git_branch":   rec.get("gitBranch"),
@@ -138,7 +142,7 @@ def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
         "type":         rec.get("type"),
         "is_sidechain": 1 if rec.get("isSidechain") else 0,
         "agent_id":     rec.get("agentId"),
-        "timestamp":    rec.get("timestamp"),
+        "timestamp":    rec.get("timestamp") or rec.get("_audit_timestamp"),
         "model":        msg_obj.get("model"),
         "stop_reason":  msg_obj.get("stop_reason"),
         "prompt_id":    rec.get("promptId"),
@@ -184,7 +188,8 @@ def _evict_prior_snapshots(conn, session_id: str, message_id: str, keep_uuid: st
     conn.execute(f"DELETE FROM messages WHERE uuid IN ({placeholders})", old)
 
 
-def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
+def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0,
+              session_id_override: str = None) -> dict:
     """Ingest new lines from a JSONL file starting at ``start_byte``.
 
     Returns message/tool counts plus ``end_offset`` — the byte offset just
@@ -224,6 +229,10 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
                 end_offset = line_end
                 continue
             msg, tlist = parse_record(rec, project_slug)
+            if session_id_override:
+                msg["session_id"] = session_id_override
+                for t in tlist:
+                    t["session_id"] = session_id_override
             if not msg["session_id"] or not msg["timestamp"]:
                 end_offset = line_end
                 continue
@@ -240,6 +249,72 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0) -> dict:
             msgs += 1
             end_offset = line_end
     return {"messages": msgs, "tools": tools, "end_offset": end_offset}
+
+
+_COWORK_DEFAULT = (
+    Path.home() / "Library" / "Application Support" / "Claude" / "local-agent-mode-sessions"
+)
+
+
+def scan_cowork_dir(base: Union[str, Path], db_path: Union[str, Path]) -> dict:
+    """Scan Cowork local-agent-mode-sessions/ for both audit.jsonl transcripts
+    and the nested .claude/projects/ subagent sessions they spawn."""
+    base = Path(base)
+    totals: dict = {"messages": 0, "tools": 0, "files": 0}
+    if not base.is_dir():
+        return totals
+
+    # --- session metadata (local_*.json → human-readable titles) ---
+    with connect(db_path) as conn:
+        for meta in base.rglob("local_*.json"):
+            try:
+                data = json.loads(meta.read_text(encoding="utf-8", errors="replace"))
+                title  = data.get("title")
+                cli_id = data.get("cliSessionId")
+                if title and cli_id:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO session_titles (session_id, title) VALUES (?, ?)",
+                        (cli_id, title),
+                    )
+            except Exception:
+                pass
+        conn.commit()
+
+    # --- main conversation transcripts (audit.jsonl) ---
+    with connect(db_path) as conn:
+        for audit in base.rglob("audit.jsonl"):
+            try:
+                stat = audit.stat()
+            except OSError:
+                continue
+            row = conn.execute(
+                "SELECT mtime, bytes_read FROM files WHERE path=?", (str(audit),)
+            ).fetchone()
+            if row and row["mtime"] == stat.st_mtime and row["bytes_read"] == stat.st_size:
+                continue
+            offset = row["bytes_read"] if row and stat.st_size > row["bytes_read"] else 0
+            agent_dir = audit.parent.name
+            session_id = agent_dir[6:] if agent_dir.startswith("local_") else agent_dir
+            sub = scan_file(audit, "cowork", conn, start_byte=offset,
+                            session_id_override=session_id)
+            conn.execute(
+                "INSERT OR REPLACE INTO files (path, mtime, bytes_read, scanned_at) VALUES (?, ?, ?, ?)",
+                (str(audit), stat.st_mtime, sub["end_offset"], time.time()),
+            )
+            totals["messages"] += sub["messages"]
+            totals["tools"]    += sub["tools"]
+            totals["files"]    += 1
+        conn.commit()
+
+    # --- subagent sessions inside each sandbox's .claude/projects/ ---
+    for dot_claude in base.rglob(".claude"):
+        projects_dir = dot_claude / "projects"
+        if projects_dir.is_dir():
+            sub = scan_dir(projects_dir, db_path)
+            for k in totals:
+                totals[k] += sub[k]
+
+    return totals
 
 
 def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path]) -> dict:

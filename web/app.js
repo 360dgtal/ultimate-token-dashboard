@@ -4,11 +4,22 @@ export const $  = (sel, root=document) => root.querySelector(sel);
 export const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 
 const COMPACT = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+
+const CURRENCY_SYMBOLS = { USD: '$', GBP: '£', EUR: '€' };
+
+function _convertUsd(n, decimals) {
+  if (n == null) return '—';
+  const cur  = state.currency || 'GBP';
+  const rate = (state.rates && state.rates[cur]) || 1;
+  const sym  = CURRENCY_SYMBOLS[cur] || cur + ' ';
+  return sym + (Number(n) * rate).toFixed(decimals);
+}
+
 export const fmt = {
   int:   n => (n ?? 0).toLocaleString(),
   compact: n => COMPACT.format(n ?? 0),
-  usd:   n => n == null ? '—' : '$' + Number(n).toFixed(2),
-  usd4:  n => n == null ? '—' : '$' + Number(n).toFixed(4),
+  usd:   n => _convertUsd(n, 2),
+  usd4:  n => _convertUsd(n, 4),
   pct:   n => n == null ? '—' : (n * 100).toFixed(0) + '%',
   short: (s, n=80) => s == null ? '' : (s.length > n ? s.slice(0, n - 1) + '…' : s),
   htmlSafe: s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
@@ -29,7 +40,12 @@ export async function api(path, opts) {
   return r.json();
 }
 
-export const state = { plan: 'api', pricing: null };
+export const state = {
+  plan: 'api',
+  pricing: null,
+  currency: localStorage.getItem('td.currency') || 'GBP',
+  rates: { USD: 1.0, GBP: 0.79, EUR: 0.92 },
+};
 
 const ROUTES = {
   '/overview': () => import('/web/routes/overview.js'),
@@ -50,10 +66,23 @@ function buildTopbar() {
       ${Object.keys(ROUTES).map(p => `<a href="#${p}" data-route="${p}">${p.slice(1)}</a>`).join('')}
     </nav>
     <div class="spacer"></div>
+    <select id="currency-select" class="pill currency-select" title="Display currency">
+      <option value="GBP">£ GBP</option>
+      <option value="USD">$ USD</option>
+      <option value="EUR">€ EUR</option>
+    </select>
     <span class="pill" id="plan-pill">api</span>
     <span class="pill muted" title="Cmd/Ctrl+B blurs sensitive text">⌘B blur</span>
   `;
   document.body.prepend(wrap);
+
+  const sel = document.getElementById('currency-select');
+  sel.value = state.currency;
+  sel.addEventListener('change', () => {
+    state.currency = sel.value;
+    localStorage.setItem('td.currency', sel.value);
+    render();
+  });
 }
 
 function setActiveTab(routeKey) {
@@ -106,9 +135,13 @@ async function firstRun() {
 
 async function boot() {
   buildTopbar();
-  const planResp = await api('/api/plan');
-  state.plan = planResp.plan;
+  const [planResp, ratesResp] = await Promise.all([
+    api('/api/plan'),
+    api('/api/rates').catch(() => state.rates),
+  ]);
+  state.plan    = planResp.plan;
   state.pricing = planResp.pricing;
+  state.rates   = ratesResp;
   $('#plan-pill').textContent = state.plan;
 
   await firstRun();

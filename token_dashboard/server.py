@@ -15,9 +15,9 @@ from .db import (
     tool_token_breakdown, recent_sessions, session_turns,
     daily_token_breakdown, model_breakdown, skill_breakdown,
 )
-from .pricing import load_pricing, cost_for, get_plan, set_plan
+from .pricing import load_pricing, cost_for, get_plan, set_plan, fetch_rates
 from .tips import all_tips, dismiss_tip
-from .scanner import scan_dir
+from .scanner import scan_dir, scan_cowork_dir
 from .skills import cached_catalog
 
 
@@ -68,7 +68,7 @@ def _serve_static(handler, rel: str) -> None:
     handler.wfile.write(body)
 
 
-def build_handler(db_path: str, projects_dir: str):
+def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
     pricing = load_pricing(PRICING_JSON)
 
     class H(http.server.BaseHTTPRequestHandler):
@@ -139,10 +139,16 @@ def build_handler(db_path: str, projects_dir: str):
                 return _send_json(self, session_turns(db_path, sid))
             if path == "/api/tips":
                 return _send_json(self, all_tips(db_path))
+            if path == "/api/rates":
+                return _send_json(self, fetch_rates())
             if path == "/api/plan":
                 return _send_json(self, {"plan": get_plan(db_path), "pricing": pricing})
             if path == "/api/scan":
                 n = scan_dir(projects_dir, db_path)
+                if cowork_dir:
+                    cn = scan_cowork_dir(cowork_dir, db_path)
+                    for k in n:
+                        n[k] += cn[k]
                 return _send_json(self, n)
             if path == "/api/stream":
                 self.send_response(200)
@@ -190,10 +196,14 @@ def build_handler(db_path: str, projects_dir: str):
     return H
 
 
-def _scan_loop(db_path: str, projects_dir: str, interval: float = 30.0):
+def _scan_loop(db_path: str, projects_dir: str, cowork_dir=None, interval: float = 30.0):
     while True:
         try:
             n = scan_dir(projects_dir, db_path)
+            if cowork_dir:
+                cn = scan_cowork_dir(cowork_dir, db_path)
+                for k in n:
+                    n[k] += cn[k]
             if n["messages"] > 0:
                 EVENTS.put({"type": "scan", "n": n, "ts": time.time()})
         except Exception as e:
@@ -201,8 +211,10 @@ def _scan_loop(db_path: str, projects_dir: str, interval: float = 30.0):
         time.sleep(interval)
 
 
-def run(host: str, port: int, db_path: str, projects_dir: str):
-    threading.Thread(target=_scan_loop, args=(db_path, projects_dir), daemon=True).start()
-    H = build_handler(db_path, projects_dir)
+def run(host: str, port: int, db_path: str, projects_dir: str, cowork_dir=None):
+    threading.Thread(
+        target=_scan_loop, args=(db_path, projects_dir, cowork_dir), daemon=True
+    ).start()
+    H = build_handler(db_path, projects_dir, cowork_dir)
     httpd = http.server.ThreadingHTTPServer((host, port), H)
     httpd.serve_forever()

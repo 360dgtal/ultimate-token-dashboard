@@ -6,9 +6,10 @@ import os
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 from token_dashboard.db import init_db, default_db_path, overview_totals
-from token_dashboard.scanner import scan_dir
+from token_dashboard.scanner import scan_dir, scan_cowork_dir, _COWORK_DEFAULT
 from token_dashboard.tips import all_tips
 
 
@@ -24,6 +25,14 @@ def _projects(args) -> str:
     )
 
 
+def _cowork_dir(args) -> Optional[Path]:
+    if getattr(args, "no_cowork", False):
+        return None
+    custom = os.environ.get("CLAUDE_COWORK_DIR")
+    base = Path(custom) if custom else _COWORK_DEFAULT
+    return base if base.is_dir() else None
+
+
 def _today_range():
     now = datetime.now(timezone.utc)
     start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
@@ -35,6 +44,11 @@ def cmd_scan(args):
     db = _db_path(args)
     init_db(db)
     n = scan_dir(_projects(args), db)
+    cowork = _cowork_dir(args)
+    if cowork:
+        cn = scan_cowork_dir(cowork, db)
+        for k in n:
+            n[k] += cn[k]
     print(f"Token Dashboard: scanned {n['files']} files, {n['messages']} messages, {n['tools']} tool calls")
 
 
@@ -73,8 +87,11 @@ def cmd_tips(args):
 def cmd_dashboard(args):
     db = _db_path(args)
     init_db(db)
+    cowork = _cowork_dir(args)
     if not args.no_scan:
         scan_dir(_projects(args), db)
+        if cowork:
+            scan_cowork_dir(cowork, db)
     from token_dashboard.server import run
 
     host = os.environ.get("HOST", "127.0.0.1")
@@ -83,7 +100,7 @@ def cmd_dashboard(args):
     if not args.no_open:
         webbrowser.open(url)
     print(f"Token Dashboard listening on {url}")
-    run(host, port, db, _projects(args))
+    run(host, port, db, _projects(args), cowork_dir=cowork)
 
 
 def main():
@@ -93,13 +110,16 @@ def main():
 
     p = argparse.ArgumentParser(prog="token-dashboard", description="Local Claude Code usage dashboard", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("scan",  parents=[common]).set_defaults(func=cmd_scan)
+    scan_p = sub.add_parser("scan", parents=[common])
+    scan_p.add_argument("--no-cowork", action="store_true", help="skip Cowork session scanning")
+    scan_p.set_defaults(func=cmd_scan)
     sub.add_parser("today", parents=[common]).set_defaults(func=cmd_today)
     sub.add_parser("stats", parents=[common]).set_defaults(func=cmd_stats)
     sub.add_parser("tips",  parents=[common]).set_defaults(func=cmd_tips)
     d = sub.add_parser("dashboard", parents=[common])
     d.add_argument("--no-scan", action="store_true")
     d.add_argument("--no-open", action="store_true")
+    d.add_argument("--no-cowork", action="store_true", help="skip Cowork session scanning")
     d.set_defaults(func=cmd_dashboard)
     args = p.parse_args()
     args.func(args)

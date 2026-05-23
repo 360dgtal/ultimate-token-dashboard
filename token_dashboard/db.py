@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS dismissed_tips (
   tip_key       TEXT PRIMARY KEY,
   dismissed_at  REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_titles (
+  session_id  TEXT PRIMARY KEY,
+  title       TEXT NOT NULL
+);
 """
 
 
@@ -177,8 +182,26 @@ def best_project_name(cwds, slug: str) -> str:
     Prefer a cwd whose walk-up matches `slug` (a true descendant of the project
     root). If none match, fall back to `project_name_for` on the first cwd,
     then to the slug's last segment.
+
+    Special-cases Cowork sandbox paths so they surface as readable labels
+    instead of auto-generated slug fragments.
     """
+    # Flat "cowork" slug = main audit.jsonl conversations
+    if slug == "cowork":
+        return "Claude Cowork"
+
     cwds = [c for c in (cwds or []) if c]
+
+    # Cowork subagent output sandboxes: cwd ends up inside local-agent-mode-sessions
+    if any("local-agent-mode-sessions" in (c or "") for c in cwds):
+        return "Cowork subagent"
+
+    # Cowork sandbox sessions have virtual paths like /sessions/<name>
+    for cwd in cwds:
+        if cwd and cwd.startswith("/sessions/"):
+            session_name = cwd.split("/sessions/", 1)[1].split("/")[0]
+            return f"Cowork › {session_name}" if session_name else "Cowork session"
+
     for cwd in cwds:
         name = _walk_to_root(cwd, slug)
         if name:
@@ -236,7 +259,16 @@ def project_summary(db_path, since=None, until=None) -> list:
              COALESCE(SUM(output_tokens), 0) AS output_tokens,
              SUM(input_tokens)+SUM(output_tokens)
                +SUM(cache_create_5m_tokens)+SUM(cache_create_1h_tokens) AS billable_tokens,
-             SUM(cache_read_tokens) AS cache_read_tokens
+             SUM(cache_read_tokens) AS cache_read_tokens,
+             MIN(timestamp) AS first_seen,
+             (SELECT prompt_text FROM messages p
+              WHERE p.project_slug=m.project_slug
+                AND p.type='user' AND p.prompt_text IS NOT NULL
+              ORDER BY p.timestamp LIMIT 1) AS first_prompt,
+             (SELECT st.title FROM session_titles st
+              JOIN messages sm ON sm.session_id=st.session_id
+              WHERE sm.project_slug=m.project_slug
+              LIMIT 1) AS session_title
         FROM messages m
        WHERE 1=1 {rng}
        GROUP BY project_slug
