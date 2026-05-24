@@ -51,12 +51,58 @@ export default async function (root) {
 
   // ── Empty state: no sessions found ──────────────────────────────────────
   if (!hasData) {
+    const status = await api('/api/status');
+    const hasLocalData = status.sessions_found > 0 || status.cowork_sessions_found > 0;
+    const icloudAvail  = status.icloud_available;
+    const icloudData   = status.icloud_has_data;
+    const syncEnabled  = status.sync_enabled;
+
     root.innerHTML = `
       <div class="onboarding" style="min-height:auto;padding:60px 20px">
         <div class="onboarding-card">
           <img src="/web/assets/logo.png" alt="360Digital" class="onboarding-logo">
           <h1 class="onboarding-title">Hi ${fmt.htmlSafe(displayName)}</h1>
           <p class="onboarding-subtitle">No session data found yet</p>
+
+          ${icloudAvail && !syncEnabled ? `
+          <div class="onboarding-section" style="text-align:left">
+            <h3>Sync your data via iCloud</h3>
+            <div class="onboarding-source ${icloudData ? 'ok' : 'empty'}" style="margin-bottom:12px">
+              <span class="source-icon">&#x2601;</span>
+              <div class="source-info">
+                <span class="source-label">iCloud Drive</span>
+                <span class="source-detail">${icloudData
+                  ? `Found ${status.icloud_sessions} synced session${status.icloud_sessions !== 1 ? 's' : ''} from another Mac`
+                  : 'Use this Mac\'s sessions on all your other Macs'}</span>
+              </div>
+            </div>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.5">
+              ${icloudData
+                ? 'Sessions from your other Mac were found in iCloud. Click below to connect and view them here.'
+                : 'If you use Claude Code on another Mac, enable iCloud sync there first. Then click "Connect" on this Mac to see the same data.'}
+            </p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              ${icloudData ? `
+                <button class="primary onboarding-btn" id="icloud-connect">Connect to iCloud data</button>
+              ` : `
+                <button class="primary onboarding-btn" id="icloud-enable">Share this Mac's data via iCloud</button>
+              `}
+            </div>
+          </div>
+          ` : ''}
+
+          ${syncEnabled ? `
+          <div class="onboarding-section" style="text-align:left">
+            <div class="onboarding-source ok">
+              <span class="source-icon">&#x2601;</span>
+              <div class="source-info">
+                <span class="source-label">iCloud Sync</span>
+                <span class="source-detail">Connected — waiting for data to sync from iCloud</span>
+              </div>
+              <span class="source-status">Syncing</span>
+            </div>
+          </div>
+          ` : ''}
 
           <div class="onboarding-section" style="text-align:left">
             <h3>What this dashboard tracks</h3>
@@ -65,7 +111,7 @@ export default async function (root) {
                 <span class="step-num" style="background:var(--good);color:#fff;border:none">&#x2713;</span>
                 <div>
                   <strong>Claude Code sessions</strong>
-                  <p>Every time you use <code class="onboarding-code-inline">claude</code> in Terminal or via Claude Desktop's agent/code mode, a session log is created on your Mac.</p>
+                  <p>Every time you use <code class="onboarding-code-inline">claude</code> in Terminal or via Claude Desktop's agent/code mode.</p>
                 </div>
               </div>
               <div class="step">
@@ -78,58 +124,71 @@ export default async function (root) {
               <div class="step">
                 <span class="step-num" style="background:var(--bad);color:#fff;border:none">&#x2715;</span>
                 <div>
-                  <strong>Regular Claude chats are not tracked</strong>
-                  <p>Conversations in the Claude Desktop chat window or on claude.ai do not create local session logs. There is currently no API to access that data.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="onboarding-section" style="text-align:left">
-            <h3>To see data here</h3>
-            <div class="onboarding-steps">
-              <div class="step">
-                <span class="step-num">1</span>
-                <div>
-                  <strong>Open Claude Desktop</strong>
-                  <p>Start a conversation and ask Claude to help with code or use agent mode. These create trackable session logs.</p>
-                </div>
-              </div>
-              <div class="step">
-                <span class="step-num">2</span>
-                <div>
-                  <strong>Or use Claude Code in Terminal</strong>
-                  <p>Run <code class="onboarding-code-inline">claude</code> in any project folder. If not installed: <code class="onboarding-code-inline">npm install -g @anthropic-ai/claude-code</code></p>
-                </div>
-              </div>
-              <div class="step">
-                <span class="step-num">3</span>
-                <div>
-                  <strong>Come back and scan</strong>
-                  <p>Click the button below to check for new sessions. The dashboard also scans automatically every 30 seconds.</p>
+                  <strong>Regular Claude chats</strong>
+                  <p>Standard conversations in Claude Desktop or claude.ai are not stored locally. No API currently exists for this data.</p>
                 </div>
               </div>
             </div>
           </div>
 
           <div class="onboarding-actions">
-            <button class="primary onboarding-btn" id="empty-scan">
+            <button class="secondary onboarding-btn" id="empty-scan">
               Scan for sessions now
             </button>
           </div>
         </div>
       </div>
     `;
+
+    // Scan button
     document.getElementById('empty-scan').addEventListener('click', async () => {
       const btn = document.getElementById('empty-scan');
       btn.textContent = 'Scanning…';
       btn.disabled = true;
       try { await api('/api/scan'); } catch {}
-      // Re-render the overview with fresh data
       root.innerHTML = '';
       const mod = await import('/web/routes/overview.js');
       await mod.default(root);
     });
+
+    // iCloud enable (share this Mac's data)
+    const enableBtn = document.getElementById('icloud-enable');
+    if (enableBtn) {
+      enableBtn.addEventListener('click', async () => {
+        enableBtn.textContent = 'Setting up…';
+        enableBtn.disabled = true;
+        const res = await fetch('/api/icloud/enable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+        if (res.ok) {
+          enableBtn.textContent = 'Sync enabled!';
+          enableBtn.style.background = 'var(--good)';
+          try { await api('/api/scan'); } catch {}
+          setTimeout(() => { root.innerHTML = ''; import('/web/routes/overview.js').then(m => m.default(root)); }, 1500);
+        } else {
+          enableBtn.textContent = res.error || 'Failed';
+          enableBtn.style.background = 'var(--bad)';
+        }
+      });
+    }
+
+    // iCloud connect (pull from another Mac)
+    const connectBtn = document.getElementById('icloud-connect');
+    if (connectBtn) {
+      connectBtn.addEventListener('click', async () => {
+        connectBtn.textContent = 'Connecting…';
+        connectBtn.disabled = true;
+        const res = await fetch('/api/icloud/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+        if (res.ok) {
+          connectBtn.textContent = 'Connected!';
+          connectBtn.style.background = 'var(--good)';
+          try { await api('/api/scan'); } catch {}
+          setTimeout(() => { root.innerHTML = ''; import('/web/routes/overview.js').then(m => m.default(root)); }, 1500);
+        } else {
+          connectBtn.textContent = res.error || 'Failed';
+          connectBtn.style.background = 'var(--bad)';
+        }
+      });
+    }
+
     return;
   }
 

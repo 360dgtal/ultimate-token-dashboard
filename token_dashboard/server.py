@@ -53,6 +53,109 @@ def _send_error(handler, status: int, msg: str) -> None:
     _send_json(handler, {"error": msg}, status=status)
 
 
+_ICLOUD_PROJ = str(
+    Path.home() / "Library" / "Mobile Documents"
+    / "com~apple~CloudDocs" / "claude-projects"
+)
+
+
+def _icloud_status() -> dict:
+    """Check iCloud sync availability and state."""
+    icloud_root = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+    icloud_available = icloud_root.is_dir()
+    icloud_proj = Path(_ICLOUD_PROJ)
+    icloud_has_data = False
+    icloud_sessions = 0
+
+    if icloud_proj.is_dir():
+        import glob
+        icloud_sessions = len(glob.glob(str(icloud_proj / "*" / "*.jsonl")))
+        icloud_has_data = icloud_sessions > 0
+
+    local_proj = Path.home() / ".claude" / "projects"
+    local_is_symlink = local_proj.is_symlink()
+    local_points_to_icloud = (
+        local_is_symlink
+        and str(local_proj.resolve()).startswith(str(icloud_root))
+    )
+
+    return {
+        "icloud_available":       icloud_available,
+        "icloud_folder_exists":   icloud_proj.is_dir(),
+        "icloud_has_data":        icloud_has_data,
+        "icloud_sessions":        icloud_sessions,
+        "sync_enabled":           local_points_to_icloud,
+    }
+
+
+def _enable_icloud_sync() -> dict:
+    """Move ~/.claude/projects to iCloud Drive and symlink back."""
+    import shutil
+    local_proj = Path.home() / ".claude" / "projects"
+    icloud_proj = Path(_ICLOUD_PROJ)
+    icloud_root = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+
+    if not icloud_root.is_dir():
+        return {"ok": False, "error": "iCloud Drive not available on this Mac"}
+
+    if local_proj.is_symlink():
+        target = str(local_proj.resolve())
+        if target == str(icloud_proj):
+            return {"ok": True, "message": "Already synced"}
+        return {"ok": False, "error": f"projects/ is already a symlink to {target}"}
+
+    # Create iCloud folder
+    icloud_proj.mkdir(parents=True, exist_ok=True)
+
+    # Copy existing data to iCloud
+    if local_proj.is_dir():
+        for item in local_proj.iterdir():
+            dest = icloud_proj / item.name
+            if item.is_dir():
+                if not dest.exists():
+                    shutil.copytree(str(item), str(dest))
+            else:
+                if not dest.exists():
+                    shutil.copy2(str(item), str(dest))
+        # Rename local as backup
+        backup = local_proj.parent / "projects_backup"
+        local_proj.rename(backup)
+    # Create symlink
+    local_proj.symlink_to(icloud_proj)
+
+    return {"ok": True, "message": "Sync enabled — data is now in iCloud Drive"}
+
+
+def _connect_icloud() -> dict:
+    """On a secondary Mac: point ~/.claude/projects at the iCloud folder."""
+    import shutil
+    local_proj = Path.home() / ".claude" / "projects"
+    icloud_proj = Path(_ICLOUD_PROJ)
+
+    if not icloud_proj.is_dir():
+        return {"ok": False, "error": "No claude-projects folder found in iCloud Drive. Enable sync on your main Mac first."}
+
+    if local_proj.is_symlink() and str(local_proj.resolve()) == str(icloud_proj):
+        return {"ok": True, "message": "Already connected"}
+
+    # Ensure .claude directory exists
+    local_proj.parent.mkdir(parents=True, exist_ok=True)
+
+    # Move existing local data aside if any
+    if local_proj.exists() and not local_proj.is_symlink():
+        backup = local_proj.parent / "projects_local_backup"
+        if not backup.exists():
+            local_proj.rename(backup)
+        else:
+            shutil.rmtree(str(local_proj))
+
+    if local_proj.is_symlink():
+        local_proj.unlink()
+
+    local_proj.symlink_to(icloud_proj)
+    return {"ok": True, "message": "Connected to iCloud data"}
+
+
 def _detect_status(projects_dir: str, cowork_dir, db_path: str) -> dict:
     """Return what Claude data is available on this machine."""
     import glob
@@ -82,6 +185,8 @@ def _detect_status(projects_dir: str, cowork_dir, db_path: str) -> dict:
                     if cs.is_dir():
                         cowork_sessions += 1
 
+    icloud = _icloud_status()
+
     return {
         "username":                getpass.getuser(),
         "claude_code_installed":   claude_code_installed,
@@ -92,6 +197,7 @@ def _detect_status(projects_dir: str, cowork_dir, db_path: str) -> dict:
         "sessions_found":          session_files,
         "cowork_sessions_found":   cowork_sessions,
         "has_data":                session_files > 0 or cowork_sessions > 0,
+        **icloud,
     }
 
 
@@ -246,6 +352,10 @@ def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
             if url.path == "/api/tips/dismiss":
                 dismiss_tip(db_path, body.get("key", ""))
                 return _send_json(self, {"ok": True})
+            if url.path == "/api/icloud/enable":
+                return _send_json(self, _enable_icloud_sync())
+            if url.path == "/api/icloud/connect":
+                return _send_json(self, _connect_icloud())
             self.send_response(404)
             self.end_headers()
 
@@ -260,6 +370,14 @@ def _scan_loop(db_path: str, projects_dir: str, cowork_dir=None, interval: float
                 cn = scan_cowork_dir(cowork_dir, db_path)
                 for k in n:
                     n[k] += cn[k]
+            # Also scan iCloud projects folder if it exists and isn't
+            # already the same directory (symlinked)
+            icloud = Path(_ICLOUD_PROJ)
+            local  = Path(projects_dir).resolve()
+            if icloud.is_dir() and icloud.resolve() != local:
+                icn = scan_dir(str(icloud), db_path)
+                for k in n:
+                    n[k] += icn[k]
             if n["messages"] > 0:
                 EVENTS.put({"type": "scan", "n": n, "ts": time.time()})
         except Exception as e:
