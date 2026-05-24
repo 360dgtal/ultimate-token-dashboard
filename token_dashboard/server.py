@@ -1,6 +1,7 @@
 """HTTP server: static frontend + JSON endpoints + SSE diff stream."""
 from __future__ import annotations
 
+import getpass
 import http.server
 import json
 import mimetypes
@@ -139,6 +140,8 @@ def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
                 return _send_json(self, session_turns(db_path, sid))
             if path == "/api/tips":
                 return _send_json(self, all_tips(db_path))
+            if path == "/api/whoami":
+                return _send_json(self, {"username": getpass.getuser()})
             if path == "/api/rates":
                 return _send_json(self, fetch_rates())
             if path == "/api/plan":

@@ -34,14 +34,18 @@ export default async function (root) {
   const range = readRange();
   const since = sinceIso(range);
 
-  const [totals, projects, sessions, tools, daily, byModel] = await Promise.all([
+  const [totals, projects, sessions, tools, daily, byModel, whoami] = await Promise.all([
     api(withSince('/api/overview', since)),
     api(withSince('/api/projects', since)),
     api(withSince('/api/sessions?limit=10', since)),
     api(withSince('/api/tools', since)),
     api(withSince('/api/daily', since)),
     api(withSince('/api/by-model', since)),
+    api('/api/whoami'),
   ]);
+
+  const displayName = localStorage.getItem('td.displayName') || _toTitleCase(whoami.username);
+  const accountId   = localStorage.getItem('td.accountEmail') || '';
 
   const cacheCreate =
     (totals.cache_create_5m_tokens || 0) +
@@ -59,6 +63,17 @@ export default async function (root) {
     </div>`;
 
   root.innerHTML = `
+    <div class="greeting-banner">
+      <div class="greeting-text">
+        <span class="greeting-hi">Hi ${fmt.htmlSafe(displayName)} 👋</span>
+        <span class="greeting-tagline">Take back control of your tokens.</span>
+      </div>
+      <p class="greeting-sub">
+        Increase your value per token spend across all versions of your connected Claude account${accountId ? ` (${fmt.htmlSafe(accountId)})` : ''}.
+      </p>
+      <p class="greeting-notice">Updated daily · more models &amp; features coming soon</p>
+    </div>
+
     <div class="flex" style="margin-bottom:14px">
       <h2 style="margin:0;font-size:16px;letter-spacing:-0.01em">Overview</h2>
       <span class="muted" style="font-size:12px">${range.days ? `last ${range.days} days` : 'all time'}</span>
@@ -193,4 +208,9 @@ function planSubtitle() {
   const p = state.pricing.plans[state.plan];
   if (!p || !p.monthly) return '';
   return `<div class="sub">pay $${p.monthly}/mo on ${fmt.htmlSafe(p.label)}</div>`;
+}
+
+function _toTitleCase(s) {
+  if (!s) return 'there';
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

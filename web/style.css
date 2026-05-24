@@ -70,6 +70,39 @@ header.topbar {
 /* main */
 main#app { padding: 24px 20px; max-width: 1400px; margin: 0 auto; }
 
+/* greeting banner */
+.greeting-banner {
+  padding: 20px 24px 18px;
+  margin-bottom: 20px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #0F1419 0%, #131922 60%, #0d1117 100%);
+  border: 1px solid var(--border-2);
+  position: relative;
+  overflow: hidden;
+}
+.greeting-banner::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(ellipse at 0% 0%, rgba(74,158,255,0.08) 0%, transparent 60%);
+  pointer-events: none;
+}
+.greeting-text {
+  display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.greeting-hi {
+  font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--text);
+}
+.greeting-tagline {
+  font-size: 15px; font-weight: 500; color: var(--accent);
+}
+.greeting-sub {
+  margin: 0 0 4px; font-size: 12px; color: var(--muted); line-height: 1.5;
+}
+.greeting-notice {
+  margin: 0; font-size: 11px; color: var(--muted-2); letter-spacing: 0.01em;
+}
+
 /* card */
 .card {
   background: var(--panel);
