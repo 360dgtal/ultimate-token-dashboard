@@ -48,13 +48,14 @@ export const state = {
 };
 
 const ROUTES = {
-  '/overview': () => import('/web/routes/overview.js'),
-  '/prompts':  () => import('/web/routes/prompts.js'),
-  '/sessions': () => import('/web/routes/sessions.js'),
-  '/projects': () => import('/web/routes/projects.js'),
-  '/skills':   () => import('/web/routes/skills.js'),
-  '/tips':     () => import('/web/routes/tips.js'),
-  '/settings': () => import('/web/routes/settings.js'),
+  '/overview':    () => import('/web/routes/overview.js'),
+  '/prompts':     () => import('/web/routes/prompts.js'),
+  '/sessions':    () => import('/web/routes/sessions.js'),
+  '/projects':    () => import('/web/routes/projects.js'),
+  '/skills':      () => import('/web/routes/skills.js'),
+  '/tips':        () => import('/web/routes/tips.js'),
+  '/settings':    () => import('/web/routes/settings.js'),
+  '/onboarding':  () => import('/web/routes/onboarding.js'),
 };
 
 function buildTopbar() {
@@ -94,6 +95,14 @@ async function render() {
   const path = hash.split('?')[0];
   let key = path;
   if (path.startsWith('/sessions/')) key = '/sessions';
+
+  // Hide nav chrome during onboarding
+  const isOnboarding = key === '/onboarding';
+  const topbar = $('header.topbar');
+  if (topbar) {
+    $$('nav, .spacer, .currency-select, #plan-pill, .pill.muted', topbar).forEach(el => el.style.display = isOnboarding ? 'none' : '');
+  }
+
   setActiveTab(key);
   const loader = ROUTES[key] || ROUTES['/overview'];
   const mod = await loader();
@@ -143,6 +152,11 @@ async function boot() {
   state.pricing = planResp.pricing;
   state.rates   = ratesResp;
   $('#plan-pill').textContent = state.plan;
+
+  // Onboarding gate — show setup screen on first launch
+  if (!localStorage.getItem('td.onboarded')) {
+    location.hash = '#/onboarding';
+  }
 
   await firstRun();
 

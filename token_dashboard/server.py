@@ -45,6 +45,48 @@ def _send_error(handler, status: int, msg: str) -> None:
     _send_json(handler, {"error": msg}, status=status)
 
 
+def _detect_status(projects_dir: str, cowork_dir, db_path: str) -> dict:
+    """Return what Claude data is available on this machine."""
+    import glob
+    projects_path = Path(projects_dir) if projects_dir else None
+    cowork_path   = Path(cowork_dir) if cowork_dir else None
+
+    claude_code_installed = Path.home().joinpath(".claude").is_dir()
+    claude_desktop_installed = (
+        Path.home() / "Library" / "Application Support" / "Claude"
+    ).is_dir()
+
+    # Count projects and JSONL files
+    project_slugs = []
+    session_files = 0
+    if projects_path and projects_path.is_dir():
+        for p in projects_path.iterdir():
+            if p.is_dir() and not p.name.startswith("."):
+                project_slugs.append(p.name)
+                session_files += len(glob.glob(str(p / "*.jsonl")))
+
+    # Count cowork sessions
+    cowork_sessions = 0
+    if cowork_path and cowork_path.is_dir():
+        for ws in cowork_path.iterdir():
+            if ws.is_dir():
+                for cs in ws.iterdir():
+                    if cs.is_dir():
+                        cowork_sessions += 1
+
+    return {
+        "username":                getpass.getuser(),
+        "claude_code_installed":   claude_code_installed,
+        "claude_desktop_installed": claude_desktop_installed,
+        "projects_dir":            str(projects_path) if projects_path else None,
+        "cowork_dir":              str(cowork_path) if cowork_path else None,
+        "projects_found":          len(project_slugs),
+        "sessions_found":          session_files,
+        "cowork_sessions_found":   cowork_sessions,
+        "has_data":                session_files > 0 or cowork_sessions > 0,
+    }
+
+
 def _clamp_limit(raw, default: int) -> int:
     try:
         v = int(raw)
@@ -142,6 +184,9 @@ def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
                 return _send_json(self, all_tips(db_path))
             if path == "/api/whoami":
                 return _send_json(self, {"username": getpass.getuser()})
+            if path == "/api/status":
+                return _send_json(self, _detect_status(
+                    projects_dir, cowork_dir, db_path))
             if path == "/api/rates":
                 return _send_json(self, fetch_rates())
             if path == "/api/plan":
