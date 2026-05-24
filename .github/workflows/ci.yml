@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run automated tests
+        run: python3 -m unittest discover tests -v
+
+      - name: Check no syntax errors in frontend JS
+        run: |
+          node --check web/app.js
+          for f in web/routes/*.js; do node --check "$f"; done
