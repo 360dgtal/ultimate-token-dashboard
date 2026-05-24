@@ -87,8 +87,8 @@ main#app { padding: 24px 20px; max-width: 1400px; margin: 0 auto; }
   pointer-events: none;
 }
 .greeting-text {
-  display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-  margin-bottom: 6px;
+  display: flex; flex-direction: column; gap: 4px;
+  margin-bottom: 10px;
 }
 .greeting-hi {
   font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--text);
@@ -97,10 +97,10 @@ main#app { padding: 24px 20px; max-width: 1400px; margin: 0 auto; }
   font-size: 15px; font-weight: 500; color: var(--accent);
 }
 .greeting-sub {
-  margin: 0 0 4px; font-size: 12px; color: var(--muted); line-height: 1.5;
+  margin: 0 0 4px; font-size: 13px; color: #ffffff; line-height: 1.5;
 }
 .greeting-notice {
-  margin: 0; font-size: 11px; color: var(--muted-2); letter-spacing: 0.01em;
+  margin: 0; font-size: 12px; color: #ffffff; letter-spacing: 0.01em;
 }
 
 /* card */

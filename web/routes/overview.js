@@ -65,7 +65,7 @@ export default async function (root) {
   root.innerHTML = `
     <div class="greeting-banner">
       <div class="greeting-text">
-        <span class="greeting-hi">Hi ${fmt.htmlSafe(displayName)} 👋</span>
+        <span class="greeting-hi">Hi ${fmt.htmlSafe(displayName)}</span>
         <span class="greeting-tagline">Take back control of your tokens.</span>
       </div>
       <p class="greeting-sub">
