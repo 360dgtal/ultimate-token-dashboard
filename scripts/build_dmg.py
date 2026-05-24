@@ -55,12 +55,55 @@ def build_app():
         "--hidden-import", "webview",
         "--hidden-import", "webview.platforms.cocoa",
         "--collect-all", "webview",
+        "--osx-bundle-identifier", "com.360digital.ultimatetokendashboard",
         str(ROOT / "launcher_app.py"),
     ]
     icns = ROOT / "web" / "assets" / "logo.icns"
     if icns.exists():
         cmd += ["--icon", str(icns)]
     run(cmd, cwd=ROOT)
+    # Patch Info.plist to allow localhost HTTP (ATS exception) — without this,
+    # WebKit blocks every request from the .app to http://127.0.0.1:8080
+    _patch_info_plist()
+
+
+def _patch_info_plist():
+    """Inject NSAppTransportSecurity exception for localhost into Info.plist."""
+    plist = DIST / f"{APP_NAME}.app" / "Contents" / "Info.plist"
+    if not plist.exists():
+        print(f"  (Info.plist not found at {plist})")
+        return
+    content = plist.read_text()
+    if "NSAppTransportSecurity" in content:
+        print("  ATS exception already present")
+        return
+    insertion = """    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsArbitraryLoads</key>
+      <true/>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+      <key>NSExceptionDomains</key>
+      <dict>
+        <key>localhost</key>
+        <dict>
+          <key>NSExceptionAllowsInsecureHTTPLoads</key>
+          <true/>
+          <key>NSIncludesSubdomains</key>
+          <true/>
+        </dict>
+        <key>127.0.0.1</key>
+        <dict>
+          <key>NSExceptionAllowsInsecureHTTPLoads</key>
+          <true/>
+        </dict>
+      </dict>
+    </dict>
+"""
+    # Insert before the closing </dict></plist>
+    content = content.replace("</dict>\n</plist>", insertion + "</dict>\n</plist>")
+    plist.write_text(content)
+    print("  ✓ Patched Info.plist with ATS exception for localhost / 127.0.0.1")
 
 
 def build_dmg():
