@@ -105,6 +105,25 @@ def _patch_info_plist():
     plist.write_text(content)
     print("  ✓ Patched Info.plist with ATS exception for localhost / 127.0.0.1")
 
+    # Re-sign the bundle — modifying Info.plist invalidates the existing signature
+    app_path = DIST / f"{APP_NAME}.app"
+    print("  Re-signing bundle (ad-hoc)…")
+    subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", "-",
+         "--preserve-metadata=entitlements,requirements,flags,runtime",
+         str(app_path)],
+        check=True,
+    )
+    # Verify
+    result = subprocess.run(
+        ["codesign", "--verify", "--verbose=2", str(app_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        print("  ✓ Signature valid")
+    else:
+        print(f"  ✗ Signature check failed: {result.stderr}")
+
 
 def build_dmg():
     print("\n[3/4] Creating installer DMG (with Applications symlink)…")
