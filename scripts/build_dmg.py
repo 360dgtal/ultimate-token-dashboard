@@ -53,8 +53,10 @@ def build_app():
         "--hidden-import", "token_dashboard.server",
         "--hidden-import", "token_dashboard.db",
         "--hidden-import", "token_dashboard.pricing",
-        "--hidden-import", "tkinter",
-        str(ROOT / "launcher_app.py"),   # GUI launcher as entry point
+        "--hidden-import", "webview",
+        "--hidden-import", "webview.platforms.cocoa",
+        "--collect-all", "webview",
+        str(ROOT / "launcher_app.py"),   # pywebview launcher as entry point
     ]
     # Add icon if it's already an .icns; skip if it's a PNG (PyInstaller needs .icns on Mac)
     icns = ROOT / "web" / "assets" / "logo.icns"

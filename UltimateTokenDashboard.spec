@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('/Users/stephanhack/token-dashboard/web', 'web'), ('/Users/stephanhack/token-dashboard/pricing.json', '.')]
+binaries = []
+hiddenimports = ['token_dashboard.scanner', 'token_dashboard.server', 'token_dashboard.db', 'token_dashboard.pricing', 'webview', 'webview.platforms.cocoa']
+tmp_ret = collect_all('webview')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['/Users/stephanhack/token-dashboard/launcher_app.py'],
     pathex=[],
-    binaries=[],
-    datas=[('/Users/stephanhack/token-dashboard/web', 'web'), ('/Users/stephanhack/token-dashboard/pricing.json', '.')],
-    hiddenimports=['token_dashboard.scanner', 'token_dashboard.server', 'token_dashboard.db', 'token_dashboard.pricing', 'tkinter'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
