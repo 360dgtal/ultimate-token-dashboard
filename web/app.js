@@ -61,7 +61,7 @@ function buildTopbar() {
   const wrap = document.createElement('header');
   wrap.className = 'topbar';
   wrap.innerHTML = `
-    <div class="brand">Token Dashboard</div>
+    <div class="brand"><img src="/web/assets/logo.png" alt="360Digital" class="brand-logo"> Ultimate Token Dashboard</div>
     <nav>
       ${Object.keys(ROUTES).map(p => `<a href="#${p}" data-route="${p}">${p.slice(1)}</a>`).join('')}
     </nav>

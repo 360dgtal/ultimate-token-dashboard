@@ -41,10 +41,8 @@ header.topbar {
   font-weight: 600; letter-spacing: -0.01em; font-size: 14px;
   display: flex; align-items: center; gap: 8px;
 }
-.topbar .brand::before {
-  content: ""; display: inline-block; width: 8px; height: 8px;
-  background: var(--accent); border-radius: 2px;
-  box-shadow: 0 0 12px var(--accent);
+.topbar .brand-logo {
+  height: 22px; width: auto; display: block;
 }
 .topbar nav { display: flex; gap: 2px; margin-left: 12px; }
 .topbar nav a {
