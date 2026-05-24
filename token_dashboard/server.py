@@ -22,8 +22,16 @@ from .scanner import scan_dir, scan_cowork_dir
 from .skills import cached_catalog
 
 
-WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
-PRICING_JSON = Path(__file__).resolve().parent.parent / "pricing.json"
+import sys as _sys
+
+if getattr(_sys, 'frozen', False):
+    # PyInstaller bundle — _MEIPASS is the extracted root containing web/ and pricing.json
+    _ROOT = Path(_sys._MEIPASS)
+else:
+    _ROOT = Path(__file__).resolve().parent.parent
+
+WEB_ROOT = _ROOT / "web"
+PRICING_JSON = _ROOT / "pricing.json"
 
 EVENTS: "queue.Queue[dict]" = queue.Queue()
 
