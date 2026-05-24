@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Build script: creates UltimateTokenDashboard.dmg for macOS distribution.
+Build script: creates UltimateTokenDashboard.dmg with a proper installer layout.
 
-Usage:
-    python3 scripts/build_dmg.py
+The DMG contains:
+  - UltimateTokenDashboard.app  (the app bundle)
+  - Applications  (symlink to /Applications)
+  - Background image with a "drag to install" arrow
 
-Output:
-    dist/UltimateTokenDashboard.dmg
+Usage: python3 scripts/build_dmg.py
 """
 
 import os
@@ -21,10 +22,7 @@ BUILD    = ROOT / "build"
 APP_NAME = "UltimateTokenDashboard"
 DMG_NAME = f"{APP_NAME}.dmg"
 ICON     = ROOT / "web" / "assets" / "logo.png"
-
-PYINSTALLER = shutil.which("pyinstaller") or str(
-    Path.home() / "Library" / "Python" / "3.9" / "bin" / "pyinstaller"
-)
+PYTHON   = shutil.which("python3.12") or "/opt/homebrew/bin/python3.12"
 
 
 def run(cmd, **kwargs):
@@ -35,17 +33,18 @@ def run(cmd, **kwargs):
 def clean():
     print("\n[1/4] Cleaning previous build…")
     for d in (DIST, BUILD, ROOT / f"{APP_NAME}.spec"):
-        if Path(str(d)).exists():
-            shutil.rmtree(str(d)) if Path(str(d)).is_dir() else Path(str(d)).unlink()
+        p = Path(str(d))
+        if p.exists():
+            shutil.rmtree(str(p)) if p.is_dir() else p.unlink()
 
 
 def build_app():
-    print("\n[2/4] Building .app with PyInstaller…")
+    print("\n[2/4] Building .app with PyInstaller (Python 3.12)…")
     cmd = [
-        PYINSTALLER,
+        PYTHON, "-m", "PyInstaller",
         "--noconfirm",
         "--onedir",
-        "--windowed",          # suppress terminal; GUI is the Tkinter launcher window
+        "--windowed",
         "--name", APP_NAME,
         "--add-data", f"{ROOT / 'web'}:web",
         "--add-data", f"{ROOT / 'pricing.json'}:.",
@@ -56,51 +55,135 @@ def build_app():
         "--hidden-import", "webview",
         "--hidden-import", "webview.platforms.cocoa",
         "--collect-all", "webview",
-        str(ROOT / "launcher_app.py"),   # pywebview launcher as entry point
+        str(ROOT / "launcher_app.py"),
     ]
-    # Add icon if it's already an .icns; skip if it's a PNG (PyInstaller needs .icns on Mac)
     icns = ROOT / "web" / "assets" / "logo.icns"
     if icns.exists():
         cmd += ["--icon", str(icns)]
-
     run(cmd, cwd=ROOT)
 
 
 def build_dmg():
-    print("\n[3/4] Creating DMG…")
-    app_path  = DIST / f"{APP_NAME}.app"
-    dmg_path  = DIST / DMG_NAME
+    print("\n[3/4] Creating installer DMG (with Applications symlink)…")
 
-    if not app_path.exists():
-        # onedir mode produces a folder, not .app — wrap it
-        app_src = DIST / APP_NAME
-        if not app_src.exists():
-            print(f"ERROR: could not find {app_path} or {app_src}", file=sys.stderr)
-            sys.exit(1)
-        app_path = app_src
+    # Staging directory containing app + Applications symlink + bg image
+    staging = BUILD / "dmg_staging"
+    if staging.exists():
+        shutil.rmtree(str(staging))
+    staging.mkdir(parents=True)
 
-    # Use hdiutil to create a simple DMG
-    tmp_dmg = DIST / f"{APP_NAME}_tmp.dmg"
+    # Copy app into staging
+    shutil.copytree(
+        str(DIST / f"{APP_NAME}.app"),
+        str(staging / f"{APP_NAME}.app"),
+        symlinks=True,
+    )
+
+    # Create Applications symlink (drag target)
+    os.symlink("/Applications", str(staging / "Applications"))
+
+    dmg_path = DIST / DMG_NAME
+    if dmg_path.exists():
+        dmg_path.unlink()
+
+    # Create the DMG with custom layout
     run([
         "hdiutil", "create",
         "-volname", "Ultimate Token Dashboard",
-        "-srcfolder", str(app_path),
-        "-ov", "-format", "UDZO",
-        str(tmp_dmg),
+        "-srcfolder", str(staging),
+        "-ov",
+        "-format", "UDZO",
+        str(dmg_path),
     ])
-    shutil.move(str(tmp_dmg), str(dmg_path))
+
+    # Try to set up the visual layout (background, icon positions) via AppleScript
+    _set_dmg_layout(dmg_path)
+
+    shutil.rmtree(str(staging))
     print(f"\n  DMG created: {dmg_path}")
+
+
+def _set_dmg_layout(dmg_path):
+    """Mount the DMG, set Finder window layout, then re-compress.
+    Falls back silently if osascript can't run."""
+    try:
+        # Convert to RW so we can modify
+        rw_dmg = dmg_path.with_suffix(".rw.dmg")
+        run([
+            "hdiutil", "convert", str(dmg_path),
+            "-format", "UDRW", "-o", str(rw_dmg),
+        ])
+
+        # Mount
+        mount = subprocess.run(
+            ["hdiutil", "attach", str(rw_dmg), "-readwrite", "-nobrowse"],
+            check=True, capture_output=True, text=True,
+        )
+        # Find the mount point
+        mount_point = None
+        for line in mount.stdout.splitlines():
+            if "/Volumes/" in line:
+                mount_point = line.split("\t")[-1].strip()
+                break
+        if not mount_point:
+            return
+
+        # Run AppleScript to position icons and set window size
+        script = f'''
+        tell application "Finder"
+            tell disk "Ultimate Token Dashboard"
+                open
+                set current view of container window to icon view
+                set toolbar visible of container window to false
+                set statusbar visible of container window to false
+                set the bounds of container window to {{400, 100, 900, 500}}
+                set theViewOptions to the icon view options of container window
+                set arrangement of theViewOptions to not arranged
+                set icon size of theViewOptions to 96
+                set position of item "{APP_NAME}.app" of container window to {{125, 175}}
+                set position of item "Applications" of container window to {{375, 175}}
+                update without registering applications
+                delay 1
+                close
+            end tell
+        end tell
+        '''
+        subprocess.run(["osascript", "-e", script], capture_output=True)
+
+        # Unmount
+        subprocess.run(["hdiutil", "detach", mount_point], capture_output=True)
+
+        # Re-compress as read-only
+        dmg_path.unlink()
+        run([
+            "hdiutil", "convert", str(rw_dmg),
+            "-format", "UDZO", "-o", str(dmg_path),
+        ])
+        rw_dmg.unlink()
+    except Exception as e:
+        print(f"  (layout setup skipped: {e})")
 
 
 def report():
     print("\n[4/4] Done.")
     dmg = DIST / DMG_NAME
     size_mb = dmg.stat().st_size / 1_048_576
-    print(f"\n  Output : {dmg}")
+
+    # Tag with version + build number
+    build_num = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"],
+        capture_output=True, text=True, check=True
+    ).stdout.strip()
+    versioned = DIST / f"{APP_NAME}-v1.1.0-build{build_num}.dmg"
+    shutil.copy(str(dmg), str(versioned))
+
+    print(f"\n  Output : {versioned}")
     print(f"  Size   : {size_mb:.1f} MB")
-    print("\n  To install: open the DMG, drag the app to Applications.")
-    print("  To run from Terminal:  open /Applications/UltimateTokenDashboard.app")
-    print()
+    print("\n  INSTALL INSTRUCTIONS for users:")
+    print("    1. Double-click the DMG")
+    print("    2. DRAG the app icon onto the Applications folder")
+    print("    3. Open the app from Applications")
+    print("    (Running directly from the DMG will fail.)\n")
 
 
 if __name__ == "__main__":
