@@ -8,10 +8,29 @@ http://127.0.0.1:<PORT>.
 """
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
 import traceback
+from datetime import datetime
+
+# ── log to ~/Documents/UltimateTokenDashboard.log so user can read it visually ──
+_LOG = os.path.expanduser("~/Documents/UltimateTokenDashboard.log")
+def _log(msg):
+    try:
+        with open(_LOG, "a") as f:
+            f.write(f"[{datetime.now().isoformat()}] {msg}\n")
+    except Exception:
+        pass
+
+_log("=" * 60)
+_log("Launcher starting")
+_log(f"Python: {sys.version}")
+_log(f"Frozen: {getattr(sys, 'frozen', False)}")
+_log(f"Executable: {sys.executable}")
+_log(f"_MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}")
+_log(f"CWD: {os.getcwd()}")
 
 # ── path / working-dir setup ─────────────────────────────────────────────────
 if getattr(sys, 'frozen', False):
@@ -57,16 +76,36 @@ def _ensure_dirs():
         os.makedirs(proj_dir, exist_ok=True)
 
 
+def _strip_quarantine():
+    """Remove quarantine attr from self if present — fixes AirDrop installs."""
+    try:
+        if getattr(sys, 'frozen', False):
+            app_path = os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
+            if app_path.endswith(".app"):
+                subprocess.run(
+                    ["xattr", "-dr", "com.apple.quarantine", app_path],
+                    capture_output=True, timeout=5,
+                )
+                _log(f"Stripped quarantine from {app_path}")
+    except Exception as e:
+        _log(f"quarantine strip failed: {e}")
+
+
 def _start_server(port):
     """Start the HTTP server. Sets _server_error on failure."""
     global _server_error
     try:
+        _log(f"_start_server called, port={port}")
         _ensure_dirs()
+        _log("_ensure_dirs OK")
         from token_dashboard.server import run as _run_server
+        _log("Imported run from token_dashboard.server")
         cowork = _COWORK if os.path.isdir(_COWORK) else None
+        _log(f"Calling _run_server: HOST={HOST}, port={port}, DB={_DB}, PROJ={_PROJ}, cowork={cowork}")
         _run_server(HOST, port, _DB, _PROJ, cowork_dir=cowork)
     except Exception as e:
         _server_error = traceback.format_exc()
+        _log(f"SERVER ERROR:\n{_server_error}")
 
 
 def _error_html(err_text):
@@ -113,10 +152,18 @@ def _wait_for_server(port, timeout=8):
 
 
 def main():
-    import webview
+    _strip_quarantine()
+    _log("main() called")
+    try:
+        import webview
+        _log(f"pywebview imported: {webview}")
+    except Exception as e:
+        _log(f"webview import FAILED: {traceback.format_exc()}")
+        raise
 
     port = _find_free_port(PORT)
     url  = f"http://{HOST}:{port}"
+    _log(f"Port chosen: {port}, URL: {url}")
 
     # Start server in background
     t = threading.Thread(target=_start_server, args=(port,), daemon=True)
@@ -124,6 +171,7 @@ def main():
 
     # Wait for server to be ready
     server_ok = _wait_for_server(port)
+    _log(f"Server ready: {server_ok}")
 
     if server_ok:
         window = webview.create_window(
