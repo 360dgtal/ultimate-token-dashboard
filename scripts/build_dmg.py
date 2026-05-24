@@ -45,7 +45,7 @@ def build_app():
         PYINSTALLER,
         "--noconfirm",
         "--onedir",
-        "--windowed",
+        "--windowed",          # suppress terminal; GUI is the Tkinter launcher window
         "--name", APP_NAME,
         "--add-data", f"{ROOT / 'web'}:web",
         "--add-data", f"{ROOT / 'pricing.json'}:.",
@@ -53,7 +53,8 @@ def build_app():
         "--hidden-import", "token_dashboard.server",
         "--hidden-import", "token_dashboard.db",
         "--hidden-import", "token_dashboard.pricing",
-        str(ROOT / "cli.py"),
+        "--hidden-import", "tkinter",
+        str(ROOT / "launcher_app.py"),   # GUI launcher as entry point
     ]
     # Add icon if it's already an .icns; skip if it's a PNG (PyInstaller needs .icns on Mac)
     icns = ROOT / "web" / "assets" / "logo.icns"

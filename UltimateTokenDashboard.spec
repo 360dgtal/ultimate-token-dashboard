@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['/Users/stephanhack/token-dashboard/cli.py'],
+    ['/Users/stephanhack/token-dashboard/launcher_app.py'],
     pathex=[],
     binaries=[],
     datas=[('/Users/stephanhack/token-dashboard/web', 'web'), ('/Users/stephanhack/token-dashboard/pricing.json', '.')],
-    hiddenimports=['token_dashboard.scanner', 'token_dashboard.server', 'token_dashboard.db', 'token_dashboard.pricing'],
+    hiddenimports=['token_dashboard.scanner', 'token_dashboard.server', 'token_dashboard.db', 'token_dashboard.pricing', 'tkinter'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
