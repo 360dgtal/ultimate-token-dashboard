@@ -101,6 +101,31 @@ export default async function (root) {
         </div>
         ` : ''}
 
+        <!-- ICLOUD SYNC -->
+        ${status.icloud_available ? `
+        <div class="onboarding-section">
+          <h3>Sync across Macs via iCloud</h3>
+          <div class="onboarding-source ${status.icloud_has_data ? 'ok' : 'empty'}" style="margin-bottom:12px">
+            <span class="source-icon">&#x2601;</span>
+            <div class="source-info">
+              <span class="source-label">iCloud Drive</span>
+              <span class="source-detail">${status.icloud_has_data
+                ? 'Session data found in iCloud from another Mac'
+                : status.sync_enabled
+                  ? 'Sync enabled — waiting for iCloud to finish uploading'
+                  : 'Share your Claude session data across all your Macs'}</span>
+            </div>
+          </div>
+          ${!status.sync_enabled ? `
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="primary onboarding-btn" id="icloud-action">
+              ${status.icloud_has_data ? 'Connect to iCloud data' : 'Enable iCloud sync'}
+            </button>
+          </div>
+          ` : ''}
+        </div>
+        ` : ''}
+
         <!-- HOW IT WORKS -->
         <div class="onboarding-section">
           <h3>How this dashboard works</h3>
@@ -184,6 +209,32 @@ export default async function (root) {
       const mod = await import('/web/routes/onboarding.js');
       root.innerHTML = '';
       await mod.default(root);
+    });
+  }
+
+  // iCloud sync
+  const icloudBtn = document.getElementById('icloud-action');
+  if (icloudBtn) {
+    icloudBtn.addEventListener('click', async () => {
+      icloudBtn.textContent = 'Setting up…';
+      icloudBtn.disabled = true;
+      // Try connect first (other Mac), fall back to enable (source Mac)
+      const endpoint = status.icloud_has_data ? '/api/icloud/connect' : '/api/icloud/enable';
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+      if (res.ok) {
+        icloudBtn.textContent = res.message;
+        icloudBtn.style.background = 'var(--good)';
+        try { await api('/api/scan'); } catch {}
+        setTimeout(() => {
+          localStorage.setItem('td.onboarded', '1');
+          location.hash = '#/overview';
+        }, 1500);
+      } else {
+        icloudBtn.textContent = res.error || 'Failed';
+        icloudBtn.style.background = 'var(--bad)';
+        icloudBtn.disabled = false;
+        setTimeout(() => { icloudBtn.textContent = 'Try again'; icloudBtn.style.background = ''; }, 3000);
+      }
     });
   }
 
