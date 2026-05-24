@@ -209,6 +209,25 @@ def _clamp_limit(raw, default: int) -> int:
     return max(1, min(v, MAX_LIMIT))
 
 
+# Explicit MIME types — mimetypes.guess_type fails inside PyInstaller bundles
+_MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".css":  "text/css; charset=utf-8",
+    ".js":   "application/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".png":  "image/png",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".svg":  "image/svg+xml",
+    ".ico":  "image/x-icon",
+    ".icns": "image/x-icns",
+    ".woff": "font/woff",
+    ".woff2":"font/woff2",
+    ".ttf":  "font/ttf",
+    ".map":  "application/json",
+}
+
+
 def _serve_static(handler, rel: str) -> None:
     rel = rel.lstrip("/")
     p = (WEB_ROOT / rel).resolve()
@@ -217,9 +236,10 @@ def _serve_static(handler, rel: str) -> None:
         handler.end_headers()
         return
     body = p.read_bytes()
-    ctype, _ = mimetypes.guess_type(str(p))
+    ext = p.suffix.lower()
+    ctype = _MIME.get(ext) or mimetypes.guess_type(str(p))[0] or "application/octet-stream"
     handler.send_response(200)
-    handler.send_header("Content-Type", ctype or "application/octet-stream")
+    handler.send_header("Content-Type", ctype)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
