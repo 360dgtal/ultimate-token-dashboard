@@ -47,6 +47,92 @@ export default async function (root) {
   const displayName = localStorage.getItem('td.displayName') || _toTitleCase(whoami.username);
   const accountId   = localStorage.getItem('td.accountEmail') || '';
 
+  const hasData = (totals.sessions || 0) > 0;
+
+  // ── Empty state: no sessions found ──────────────────────────────────────
+  if (!hasData) {
+    root.innerHTML = `
+      <div class="onboarding" style="min-height:auto;padding:60px 20px">
+        <div class="onboarding-card">
+          <img src="/web/assets/logo.png" alt="360Digital" class="onboarding-logo">
+          <h1 class="onboarding-title">Hi ${fmt.htmlSafe(displayName)}</h1>
+          <p class="onboarding-subtitle">No session data found yet</p>
+
+          <div class="onboarding-section" style="text-align:left">
+            <h3>What this dashboard tracks</h3>
+            <div class="onboarding-steps">
+              <div class="step">
+                <span class="step-num" style="background:var(--good);color:#fff;border:none">&#x2713;</span>
+                <div>
+                  <strong>Claude Code sessions</strong>
+                  <p>Every time you use <code class="onboarding-code-inline">claude</code> in Terminal or via Claude Desktop's agent/code mode, a session log is created on your Mac.</p>
+                </div>
+              </div>
+              <div class="step">
+                <span class="step-num" style="background:var(--good);color:#fff;border:none">&#x2713;</span>
+                <div>
+                  <strong>Claude Desktop Cowork sessions</strong>
+                  <p>Background agent tasks from Claude Desktop are tracked automatically.</p>
+                </div>
+              </div>
+              <div class="step">
+                <span class="step-num" style="background:var(--bad);color:#fff;border:none">&#x2715;</span>
+                <div>
+                  <strong>Regular Claude chats are not tracked</strong>
+                  <p>Conversations in the Claude Desktop chat window or on claude.ai do not create local session logs. There is currently no API to access that data.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="onboarding-section" style="text-align:left">
+            <h3>To see data here</h3>
+            <div class="onboarding-steps">
+              <div class="step">
+                <span class="step-num">1</span>
+                <div>
+                  <strong>Open Claude Desktop</strong>
+                  <p>Start a conversation and ask Claude to help with code or use agent mode. These create trackable session logs.</p>
+                </div>
+              </div>
+              <div class="step">
+                <span class="step-num">2</span>
+                <div>
+                  <strong>Or use Claude Code in Terminal</strong>
+                  <p>Run <code class="onboarding-code-inline">claude</code> in any project folder. If not installed: <code class="onboarding-code-inline">npm install -g @anthropic-ai/claude-code</code></p>
+                </div>
+              </div>
+              <div class="step">
+                <span class="step-num">3</span>
+                <div>
+                  <strong>Come back and scan</strong>
+                  <p>Click the button below to check for new sessions. The dashboard also scans automatically every 30 seconds.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="onboarding-actions">
+            <button class="primary onboarding-btn" id="empty-scan">
+              Scan for sessions now
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('empty-scan').addEventListener('click', async () => {
+      const btn = document.getElementById('empty-scan');
+      btn.textContent = 'Scanning…';
+      btn.disabled = true;
+      try { await api('/api/scan'); } catch {}
+      // Re-render the overview with fresh data
+      root.innerHTML = '';
+      const mod = await import('/web/routes/overview.js');
+      await mod.default(root);
+    });
+    return;
+  }
+
   const cacheCreate =
     (totals.cache_create_5m_tokens || 0) +
     (totals.cache_create_1h_tokens || 0);

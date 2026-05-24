@@ -9,6 +9,31 @@
 </head>
 <body>
 <main id="app"><p style="padding:40px;color:#8B98A6">Ultimate Token Dashboard — loading…</p></main>
+<script>
+// Catch ANY JS error and show it on screen
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('app');
+  el.innerHTML = '<div style="padding:40px;font-family:system-ui">'
+    + '<h2 style="color:#E5484D;font-size:18px">Startup error</h2>'
+    + '<pre style="background:#0F1419;border:1px solid #1F2630;border-radius:8px;padding:16px;font-size:12px;color:#E8A23B;overflow-x:auto;white-space:pre-wrap">'
+    + msg + '\n\nSource: ' + src + '\nLine: ' + line
+    + (err && err.stack ? '\n\n' + err.stack : '')
+    + '</pre>'
+    + '<p style="color:#8B98A6;font-size:13px;margin-top:16px">If running from a DMG, try copying the app to Applications first.</p>'
+    + '</div>';
+};
+window.addEventListener('unhandledrejection', function(e) {
+  var el = document.getElementById('app');
+  var detail = e.reason ? (e.reason.stack || e.reason.message || String(e.reason)) : 'Unknown promise rejection';
+  el.innerHTML = '<div style="padding:40px;font-family:system-ui">'
+    + '<h2 style="color:#E5484D;font-size:18px">Startup error</h2>'
+    + '<pre style="background:#0F1419;border:1px solid #1F2630;border-radius:8px;padding:16px;font-size:12px;color:#E8A23B;overflow-x:auto;white-space:pre-wrap">'
+    + detail
+    + '</pre>'
+    + '<p style="color:#8B98A6;font-size:13px;margin-top:16px">If running from a DMG, try copying the app to Applications first.</p>'
+    + '</div>';
+});
+</script>
 <script type="module" src="/web/app.js"></script>
 </body>
 </html>
