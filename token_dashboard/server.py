@@ -58,6 +58,37 @@ _ICLOUD_PROJ = str(
     / "com~apple~CloudDocs" / "claude-projects"
 )
 
+_APP_VERSION = "1.1.0"
+_UPDATE_CACHE: dict = {"ts": 0.0, "data": None}
+_UPDATE_TTL = 3600  # 1 hour
+
+
+def _check_for_update() -> dict:
+    """Query GitHub Releases for the latest version. Cached 1h."""
+    import urllib.request
+    import urllib.error
+    now = time.time()
+    if _UPDATE_CACHE["data"] and (now - _UPDATE_CACHE["ts"]) < _UPDATE_TTL:
+        return _UPDATE_CACHE["data"]
+    result = {"current": _APP_VERSION, "latest": None, "update_available": False, "url": None}
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/360dgtal/ultimate-token-dashboard/releases/latest",
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "UltimateTokenDashboard"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read())
+            latest = (data.get("tag_name") or "").lstrip("v")
+            result["latest"] = latest
+            result["url"] = data.get("html_url")
+            if latest and latest != _APP_VERSION:
+                result["update_available"] = True
+    except Exception:
+        pass
+    _UPDATE_CACHE["ts"] = now
+    _UPDATE_CACHE["data"] = result
+    return result
+
 
 def _icloud_status() -> dict:
     """Check iCloud sync availability and state."""
@@ -320,6 +351,8 @@ def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
                 return _send_json(self, all_tips(db_path))
             if path == "/api/whoami":
                 return _send_json(self, {"username": getpass.getuser()})
+            if path == "/api/update-check":
+                return _send_json(self, _check_for_update())
             if path == "/api/status":
                 return _send_json(self, _detect_status(
                     projects_dir, cowork_dir, db_path))

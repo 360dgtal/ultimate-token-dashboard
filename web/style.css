@@ -64,6 +64,41 @@ header.topbar {
   appearance: none; cursor: pointer;
   padding-right: 8px;
 }
+.topbar .refresh-btn {
+  cursor: pointer; font-family: var(--mono); font-size: 12px;
+  color: var(--muted); background: var(--panel-2); border: 1px solid var(--border);
+  transition: color 120ms, border-color 120ms;
+}
+.topbar .refresh-btn:hover { color: var(--text); border-color: var(--accent); }
+.topbar .refresh-btn:disabled { opacity: 0.6; cursor: wait; }
+.topbar .refresh-btn .refresh-icon { display: inline-block; }
+.topbar .refresh-btn.spinning .refresh-icon { animation: spin 0.8s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.topbar .status-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.topbar .status-pill .status-dot {
+  width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+}
+.topbar .status-pill.live    .status-dot { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.topbar .status-pill.live    { color: var(--good); }
+.topbar .status-pill.polling .status-dot { background: var(--warn); }
+.topbar .status-pill.polling { color: var(--warn); }
+.topbar .status-pill.offline .status-dot { background: var(--bad); }
+.topbar .status-pill.offline { color: var(--bad); }
+
+.topbar .update-pill {
+  background: var(--accent); color: #fff !important; border: 1px solid var(--accent);
+  font-weight: 600; cursor: pointer; text-decoration: none;
+  animation: pulse-update 2s ease-in-out infinite;
+}
+.topbar .update-pill:hover { background: #3a8eef; text-decoration: none; }
+@keyframes pulse-update {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,255,0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(74,158,255,0); }
+}
 .topbar .currency-select:hover { color: var(--text); border-color: var(--accent); }
 .topbar .currency-select:focus { outline: none; color: var(--text); border-color: var(--accent); }
 

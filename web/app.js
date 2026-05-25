@@ -64,9 +64,15 @@ function buildTopbar() {
   wrap.innerHTML = `
     <div class="brand"><img src="/web/assets/logo.png" alt="360Digital" class="brand-logo"> Ultimate Token Dashboard</div>
     <nav>
-      ${Object.keys(ROUTES).map(p => `<a href="#${p}" data-route="${p}">${p.slice(1)}</a>`).join('')}
+      ${Object.keys(ROUTES).filter(p => p !== '/onboarding').map(p => `<a href="#${p}" data-route="${p}">${p.slice(1)}</a>`).join('')}
     </nav>
     <div class="spacer"></div>
+    <button id="refresh-btn" class="pill refresh-btn" title="Rescan for new sessions">
+      <span class="refresh-icon">↻</span> Refresh
+    </button>
+    <span class="pill status-pill" id="status-pill" title="Live update status">
+      <span class="status-dot"></span><span id="status-label">live</span>
+    </span>
     <select id="currency-select" class="pill currency-select" title="Display currency">
       <option value="GBP">£ GBP</option>
       <option value="USD">$ USD</option>
@@ -76,6 +82,22 @@ function buildTopbar() {
     <span class="pill muted" title="Cmd/Ctrl+B blurs sensitive text">⌘B blur</span>
   `;
   document.body.prepend(wrap);
+
+  // Refresh button
+  document.getElementById('refresh-btn').addEventListener('click', forceRefresh);
+
+  // Async update check — adds an "Update available" pill if a newer release exists
+  api('/api/update-check').then(u => {
+    if (!u || !u.update_available) return;
+    const pill = document.createElement('a');
+    pill.href = u.url || '#';
+    pill.target = '_blank';
+    pill.className = 'pill update-pill';
+    pill.title = `Latest: v${u.latest} — click to download`;
+    pill.innerHTML = `↑ v${u.latest}`;
+    const spacer = document.querySelector('header.topbar .spacer');
+    if (spacer) spacer.after(pill);
+  }).catch(() => {});
 
   const sel = document.getElementById('currency-select');
   sel.value = state.currency;
@@ -100,7 +122,7 @@ async function render() {
   const isOnboarding = key === '/onboarding';
   const topbar = $('header.topbar');
   if (topbar) {
-    $$('nav, .spacer, .currency-select, #plan-pill, .pill.muted', topbar).forEach(el => el.style.display = isOnboarding ? 'none' : '');
+    $$('nav, .spacer, .currency-select, #plan-pill, .pill.muted, .refresh-btn, .status-pill', topbar).forEach(el => el.style.display = isOnboarding ? 'none' : '');
   }
 
   setActiveTab(key);
@@ -171,16 +193,75 @@ async function boot() {
     }
   });
 
-  // SSE diff stream
+  // SSE diff stream with auto-reconnect + 5-min polling fallback
+  _startLiveUpdates();
+}
+
+// ── live update plumbing ─────────────────────────────────────────────────────
+let _lastScanAt = Date.now();
+let _sseBackoff = 1000;
+let _pollTimer = null;
+
+function _setStatus(state, label) {
+  const pill = document.getElementById('status-pill');
+  const lbl  = document.getElementById('status-label');
+  if (!pill) return;
+  pill.classList.remove('live', 'polling', 'offline');
+  pill.classList.add(state);
+  if (lbl) lbl.textContent = label;
+}
+
+function _connectSSE() {
   try {
     const es = new EventSource('/api/stream');
+    es.onopen = () => {
+      _sseBackoff = 1000;
+      _setStatus('live', 'live');
+    };
     es.onmessage = ev => {
       try {
         const evt = JSON.parse(ev.data);
-        if (evt.type === 'scan') render();
+        if (evt.type === 'scan') {
+          _lastScanAt = Date.now();
+          render();
+        }
       } catch {}
     };
-  } catch {}
+    es.onerror = () => {
+      es.close();
+      _setStatus('offline', 'reconnect…');
+      setTimeout(_connectSSE, _sseBackoff);
+      _sseBackoff = Math.min(_sseBackoff * 2, 30000);
+    };
+  } catch {
+    _setStatus('offline', 'offline');
+    setTimeout(_connectSSE, _sseBackoff);
+  }
+}
+
+function _startLiveUpdates() {
+  _connectSSE();
+  // 5-minute hard refresh fallback — if SSE missed anything, force a scan
+  if (_pollTimer) clearInterval(_pollTimer);
+  _pollTimer = setInterval(async () => {
+    const stale = Date.now() - _lastScanAt > 5 * 60 * 1000;
+    if (stale) {
+      _setStatus('polling', 'polling');
+      try { await api('/api/scan'); _lastScanAt = Date.now(); render(); } catch {}
+    }
+  }, 60 * 1000); // check every minute
+}
+
+export async function forceRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  if (btn) { btn.classList.add('spinning'); btn.disabled = true; }
+  try {
+    await api('/api/scan');
+    _lastScanAt = Date.now();
+    await render();
+  } finally {
+    if (btn) { btn.classList.remove('spinning'); btn.disabled = false; }
+  }
 }
 
 boot();

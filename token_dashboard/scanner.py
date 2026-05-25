@@ -170,16 +170,22 @@ def _project_slug(file_path: Path, projects_root: Path) -> str:
     return rel.parts[0]
 
 
-def _evict_prior_snapshots(conn, session_id: str, message_id: str, keep_uuid: str) -> None:
-    """Remove older streaming snapshots for the same (session_id, message_id).
+def _evict_prior_snapshots(conn, session_id: str, message_id: str,
+                           parent_uuid: str, keep_uuid: str) -> None:
+    """Remove older streaming snapshots for the same (session_id, message_id, parent).
 
     Claude Code writes 2–3 JSONL lines per assistant response (partial → final)
     with identical message.id but distinct top-level uuids. Only the final
     tally matches billing, so earlier snapshots must be replaced, not summed.
+
+    CRITICAL: must also match parent_uuid. A multi-segment response (text →
+    tool_use → continuation) emits multiple records sharing message_id but
+    with different parents — those are NOT snapshots and must not be evicted.
     """
     old = [r[0] for r in conn.execute(
-        "SELECT uuid FROM messages WHERE session_id=? AND message_id=? AND uuid!=?",
-        (session_id, message_id, keep_uuid),
+        "SELECT uuid FROM messages "
+        "WHERE session_id=? AND message_id=? AND parent_uuid IS ? AND uuid!=?",
+        (session_id, message_id, parent_uuid, keep_uuid),
     )]
     if not old:
         return
@@ -237,7 +243,10 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0,
                 end_offset = line_end
                 continue
             if msg["message_id"]:
-                _evict_prior_snapshots(conn, msg["session_id"], msg["message_id"], msg["uuid"])
+                _evict_prior_snapshots(
+                    conn, msg["session_id"], msg["message_id"],
+                    msg["parent_uuid"], msg["uuid"],
+                )
             conn.execute(INSERT_MSG, msg)
             # tool_calls has no natural unique key; clear any prior rows for
             # this uuid so full rescans stay idempotent instead of

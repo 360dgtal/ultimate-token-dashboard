@@ -1,10 +1,15 @@
 __pycache__/
 *.pyc
-.venv/
+*.pyo
 .DS_Store
-out/
-node_modules/
+.vscode/
+
+# Build artifacts (not in git)
+build/
+dist/
+*.spec
+.github/workflows/
+
+# Local test data
 *.db
-.superpowers/
-.claude/
-docs/superpowers/
+*_backup/

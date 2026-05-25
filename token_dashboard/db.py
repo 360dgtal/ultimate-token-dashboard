@@ -240,7 +240,7 @@ def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens") -> list:
                +COALESCE(a.cache_create_5m_tokens,0)+COALESCE(a.cache_create_1h_tokens,0) AS billable_tokens,
              COALESCE(a.cache_read_tokens,0) AS cache_read_tokens
         FROM messages u
-        JOIN messages a ON a.parent_uuid = u.uuid AND a.type='assistant'
+        LEFT JOIN messages a ON a.parent_uuid = u.uuid AND a.type='assistant'
        WHERE u.type='user' AND u.prompt_text IS NOT NULL
        ORDER BY {order}
        LIMIT ?
