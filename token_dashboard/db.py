@@ -249,6 +249,54 @@ def expensive_prompts(db_path, limit: int = 50, sort: str = "tokens") -> list:
         return [dict(r) for r in c.execute(sql, (limit,))]
 
 
+def cache_by_prompt(db_path, limit: int = 15, since=None, until=None) -> list:
+    """Per user-prompt cache picture: the following assistant turn's fresh input
+    vs. reused cache, so the UI can show how efficiently each prompt reused
+    context. Ranked by cache reuse volume (the turns where caching mattered).
+    """
+    rng, args = _range_clause(since, until, "u.timestamp")
+    sql = f"""
+      SELECT u.uuid AS user_uuid, u.session_id, u.project_slug, u.timestamp,
+             u.prompt_text,
+             COALESCE(a.input_tokens,0)      AS input_tokens,
+             COALESCE(a.cache_read_tokens,0) AS cache_read_tokens,
+             COALESCE(a.cache_create_5m_tokens,0)
+               + COALESCE(a.cache_create_1h_tokens,0) AS cache_create_tokens
+        FROM messages u
+        LEFT JOIN messages a ON a.parent_uuid = u.uuid AND a.type='assistant'
+       WHERE u.type='user' AND u.prompt_text IS NOT NULL {rng}
+       ORDER BY cache_create_tokens DESC
+       LIMIT ?
+    """
+    with connect(db_path) as c:
+        return [dict(r) for r in c.execute(sql, (*args, limit))]
+
+
+def cache_by_skill(db_path, since=None, until=None) -> list:
+    """Cache picture on the assistant turns that invoked each Skill.
+
+    Correlational, not causal: a Skill's body is loaded via a system-reminder on
+    the *next* turn, so this measures the cache state of the invoking turn, not
+    the skill's own footprint. Exposed as a hint, labelled as such in the UI.
+    """
+    rng, args = _range_clause(since, until, "t.timestamp")
+    sql = f"""
+      SELECT t.target AS skill,
+             COUNT(*) AS invocations,
+             COALESCE(SUM(m.cache_read_tokens),0) AS cache_read_tokens,
+             COALESCE(SUM(m.input_tokens),0)      AS input_tokens,
+             COALESCE(SUM(m.cache_create_5m_tokens),0)
+               + COALESCE(SUM(m.cache_create_1h_tokens),0) AS cache_create_tokens
+        FROM tool_calls t
+        JOIN messages m ON m.uuid = t.message_uuid
+       WHERE t.tool_name='Skill' AND t.target IS NOT NULL AND t.target!='' {rng}
+       GROUP BY t.target
+       ORDER BY cache_read_tokens DESC
+    """
+    with connect(db_path) as c:
+        return [dict(r) for r in c.execute(sql, args)]
+
+
 def project_summary(db_path, since=None, until=None) -> list:
     rng, args = _range_clause(since, until)
     sql = f"""
@@ -260,6 +308,8 @@ def project_summary(db_path, since=None, until=None) -> list:
              SUM(input_tokens)+SUM(output_tokens)
                +SUM(cache_create_5m_tokens)+SUM(cache_create_1h_tokens) AS billable_tokens,
              SUM(cache_read_tokens) AS cache_read_tokens,
+             COALESCE(SUM(cache_create_5m_tokens),0)
+               +COALESCE(SUM(cache_create_1h_tokens),0) AS cache_create_tokens,
              MIN(timestamp) AS first_seen,
              (SELECT prompt_text FROM messages p
               WHERE p.project_slug=m.project_slug
