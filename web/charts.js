@@ -214,6 +214,23 @@ export function dailyTrendChart(el, { categories, totals, movingAvg, avgLabel })
   return c;
 }
 
+// Tiny inline sparkline (no axes/labels) for table cells.
+export function sparkline(el, values, color = '#4A9EFF') {
+  const c = echarts.init(el, null, { renderer: 'svg' });
+  c.setOption({
+    grid: { left: 1, right: 1, top: 2, bottom: 2 },
+    xAxis: { type: 'category', show: false, boundaryGap: false, data: values.map((_, i) => i) },
+    yAxis: { type: 'value', show: false, min: 0 },
+    tooltip: { show: false },
+    series: [{
+      type: 'line', data: values, showSymbol: false, smooth: true,
+      lineStyle: { width: 1.5, color },
+      areaStyle: { opacity: 0.16, color },
+    }],
+  });
+  return c;
+}
+
 export function donutChart(el, data) {
   const c = mount(el);
   c.setOption({

@@ -412,6 +412,82 @@ def daily_token_breakdown(db_path, since=None, until=None) -> list:
         return [dict(r) for r in c.execute(sql, args)]
 
 
+def project_daily(db_path, since=None, until=None) -> list:
+    """Per-project per-day billable tokens. Feeds the activity summary's
+    sparklines and Today / 7d / 30d / peak / active-days columns."""
+    rng, args = _range_clause(since, until)
+    sql = f"""
+      SELECT project_slug, substr(timestamp, 1, 10) AS day,
+             COALESCE(SUM(input_tokens),0)+COALESCE(SUM(output_tokens),0)
+               +COALESCE(SUM(cache_create_5m_tokens),0)
+               +COALESCE(SUM(cache_create_1h_tokens),0) AS tokens
+        FROM messages
+       WHERE timestamp IS NOT NULL {rng}
+       GROUP BY project_slug, day
+       ORDER BY day ASC
+    """
+    with connect(db_path) as c:
+        return [dict(r) for r in c.execute(sql, args)]
+
+
+def burn_moments(db_path, limit: int = 8, since=None, until=None) -> list:
+    """Top spend days, each annotated with its dominant project (the 'driver'),
+    that project's share of the day, turn count, and the day's busiest tools."""
+    from collections import defaultdict
+    rng, args = _range_clause(since, until)
+    sql_dp = f"""
+      SELECT substr(timestamp, 1, 10) AS day, project_slug,
+             COALESCE(SUM(input_tokens),0)+COALESCE(SUM(output_tokens),0)
+               +COALESCE(SUM(cache_create_5m_tokens),0)
+               +COALESCE(SUM(cache_create_1h_tokens),0) AS tokens,
+             SUM(CASE WHEN type='user' THEN 1 ELSE 0 END) AS turns
+        FROM messages
+       WHERE timestamp IS NOT NULL {rng}
+       GROUP BY day, project_slug
+    """
+    sql_dt = f"""
+      SELECT substr(timestamp, 1, 10) AS day, tool_name, COUNT(*) AS c
+        FROM tool_calls
+       WHERE tool_name != '_tool_result' {rng}
+       GROUP BY day, tool_name
+    """
+    day_total = defaultdict(int)
+    day_turns = defaultdict(int)
+    day_proj  = defaultdict(lambda: defaultdict(int))
+    day_tool  = defaultdict(lambda: defaultdict(int))
+    with connect(db_path) as c:
+        for r in c.execute(sql_dp, args):
+            day_total[r["day"]] += r["tokens"]
+            day_turns[r["day"]] += r["turns"] or 0
+            day_proj[r["day"]][r["project_slug"]] += r["tokens"]
+        for r in c.execute(sql_dt, args):
+            day_tool[r["day"]][r["tool_name"]] += r["c"]
+
+        top_days = sorted(day_total.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+        name_cache: dict = {}
+        out = []
+        for day, total in top_days:
+            top_slug, top_tok = max(day_proj[day].items(), key=lambda kv: kv[1])
+            if top_slug not in name_cache:
+                cwds = [row["cwd"] for row in c.execute(
+                    "SELECT DISTINCT cwd FROM messages WHERE project_slug=? AND cwd IS NOT NULL",
+                    (top_slug,),
+                )]
+                name_cache[top_slug] = best_project_name(cwds, top_slug)
+            top_tools = sorted(day_tool.get(day, {}).items(),
+                               key=lambda kv: kv[1], reverse=True)[:3]
+            out.append({
+                "day":           day,
+                "tokens":        total,
+                "turns":         day_turns[day],
+                "project_slug":  top_slug,
+                "project_name":  name_cache[top_slug],
+                "project_share": (top_tok / total) if total else None,
+                "top_tools":     [t for t, _ in top_tools],
+            })
+    return out
+
+
 def skill_breakdown(db_path, since=None, until=None) -> list:
     """Per-skill invocation counts, distinct sessions, last-used timestamp.
 

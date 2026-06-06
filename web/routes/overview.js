@@ -1,5 +1,5 @@
 import { api, fmt, state } from '/web/app.js';
-import { barChart, donutChart, groupedBarChart, stackedBarChart, calendarHeatmap, dailyTrendChart, lineChart } from '/web/charts.js';
+import { barChart, donutChart, groupedBarChart, stackedBarChart, calendarHeatmap, dailyTrendChart, lineChart, sparkline } from '/web/charts.js';
 
 const RANGES = [
   { key: '7d',  label: '7d',  days: 7 },
@@ -73,7 +73,11 @@ export default async function (root) {
   const range = readRange();
   const since = sinceIso(range);
 
-  const [totals, projects, sessions, tools, daily, byModel, cacheEff, whoami] = await Promise.all([
+  // Activity-summary table uses a fixed 30-day window (Today / 7d / 30d),
+  // independent of the page range.
+  const since30 = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+
+  const [totals, projects, sessions, tools, daily, byModel, cacheEff, burnMoments, projDaily, whoami] = await Promise.all([
     api(withSince('/api/overview', since)),
     api(withSince('/api/projects', since)),
     api(withSince('/api/sessions?limit=10', since)),
@@ -81,6 +85,8 @@ export default async function (root) {
     api(withSince('/api/daily', since)),
     api(withSince('/api/by-model', since)),
     api(withSince('/api/cache-efficiency', since)),
+    api(withSince('/api/burn-moments', since)),
+    api('/api/project-daily?since=' + encodeURIComponent(since30)),
     api('/api/whoami'),
   ]);
 
@@ -268,6 +274,27 @@ export default async function (root) {
   const promptEff = (cacheEff.by_prompt || []).filter(p => (p.cache_read_tokens || 0) + (p.cache_create_tokens || 0) > 0);
   const skillEff  = cacheEff.by_skill || [];
 
+  // ── Per-project activity summary (fixed 30-day window + sparklines) ──────
+  const last30 = [...Array(30)].map((_, i) =>
+    new Date(Date.now() - (29 - i) * 86400 * 1000).toISOString().slice(0, 10));
+  const last30Idx = Object.fromEntries(last30.map((d, i) => [d, i]));
+  const nameBySlug = Object.fromEntries(projects.map(p => [p.project_slug, p.project_name || p.project_slug]));
+  const byProj = {};
+  for (const r of projDaily) {
+    const i = last30Idx[r.day];
+    if (i == null) continue;
+    (byProj[r.project_slug] ||= new Array(30).fill(0))[i] += r.tokens || 0;
+  }
+  const activity = Object.entries(byProj).map(([slug, spark]) => {
+    const d30  = spark.reduce((a, b) => a + b, 0);
+    const d7   = spark.slice(-7).reduce((a, b) => a + b, 0);
+    const today = spark[29] || 0;
+    let peak = 0;
+    spark.forEach(v => { if (v > peak) peak = v; });
+    const active = spark.filter(v => v > 0).length;
+    return { slug, name: nameBySlug[slug] || slug, spark, d30, d7, today, peak, active };
+  }).sort((a, b) => b.d30 - a.d30).slice(0, 10);
+
   const kpi = (label, compactVal, fullVal, cls = '') => `
     <div class="card kpi ${cls}">
       <div class="label">${label}</div>
@@ -333,6 +360,26 @@ export default async function (root) {
     </div>
 
     <div class="card" style="margin-top:16px">
+      <h3>Burn moments</h3>
+      <p class="muted" style="margin:-4px 0 10px;font-size:12px">Your biggest spend days and what drove them — the project that dominated each day, its share of that day's tokens, and the tools in heaviest use.</p>
+      <table>
+        <thead><tr><th>date</th><th class="num">burn</th><th class="num">turns</th><th>driver</th></tr></thead>
+        <tbody>
+          ${burnMoments.map(m => `
+            <tr>
+              <td class="mono">${m.day}</td>
+              <td class="num">${fmt.compact(m.tokens)}</td>
+              <td class="num">${fmt.int(m.turns)}</td>
+              <td>
+                <b>${fmt.htmlSafe(fmt.short(m.project_name, 28))}</b>
+                <span class="muted">${m.project_share != null ? ` · ${(m.project_share * 100).toFixed(0)}% of day` : ''}${m.top_tools && m.top_tools.length ? ` · ${fmt.htmlSafe(m.top_tools.join(', '))}` : ''}</span>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="4" class="muted">no activity in this range</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:16px">
       <h3>Cache efficiency over time</h3>
       <p class="muted heatmap-sub">
         Reuse rate = reused cache ÷ (reused + rebuilt). High = warm cache (cheap); dips = cold starts, <code>/clear</code>, or the 5-min cache expiry forced a rebuild.
@@ -392,6 +439,26 @@ export default async function (root) {
               <td class="num">${fmt.compact(p.cache_read_tokens)}</td>
               <td class="num">${_ratioCell(_reuseRate(p.cache_read_tokens, p.cache_create_tokens))}</td>
             </tr>`).join('') || '<tr><td colspan="6" class="muted">no prompts in this range</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>Project activity <span class="muted" style="font-weight:400;font-size:11px">— last 30 days</span></h3>
+      <p class="muted" style="margin:-4px 0 10px;font-size:12px">Billable tokens per project at a glance: today, last 7 and 30 days, busiest single day, active days, and the 30-day shape.</p>
+      <table>
+        <thead><tr><th>project</th><th class="num">today</th><th class="num">7d</th><th class="num">30d</th><th class="num">peak day</th><th class="num">active</th><th>30d shape</th></tr></thead>
+        <tbody>
+          ${activity.map((a, i) => `
+            <tr>
+              <td>${fmt.htmlSafe(fmt.short(a.name, 26))}</td>
+              <td class="num">${a.today ? fmt.compact(a.today) : '<span class="muted">—</span>'}</td>
+              <td class="num">${fmt.compact(a.d7)}</td>
+              <td class="num">${fmt.compact(a.d30)}</td>
+              <td class="num">${fmt.compact(a.peak)}</td>
+              <td class="num">${a.active}</td>
+              <td><div class="spark" id="spark-${i}"></div></td>
+            </tr>`).join('') || '<tr><td colspan="7" class="muted">no activity in the last 30 days</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -478,6 +545,12 @@ export default async function (root) {
     series: [{ name: 'reuse rate', data: effDaily, color: '#3FB68B', connectNulls: true }],
     yMin: 0, yMax: 100,
     valueFormatter: v => (v == null ? '—' : Math.round(v) + '%'),
+  });
+
+  // Per-project activity sparklines
+  activity.forEach((a, i) => {
+    const el = document.getElementById('spark-' + i);
+    if (el) sparkline(el, a.spark, '#4A9EFF');
   });
 
   // Your daily work — billable tokens (input + output + cache create)
