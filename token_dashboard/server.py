@@ -15,6 +15,7 @@ from .db import (
     overview_totals, expensive_prompts, project_summary,
     tool_token_breakdown, recent_sessions, session_turns,
     daily_token_breakdown, model_breakdown, skill_breakdown,
+    cache_by_prompt, cache_by_skill, project_daily, burn_moments,
 )
 from .pricing import load_pricing, cost_for, get_plan, set_plan, fetch_rates
 from .tips import all_tips, dismiss_tip
@@ -330,6 +331,17 @@ def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
                 ))
             if path == "/api/daily":
                 return _send_json(self, daily_token_breakdown(db_path, since, until))
+            if path == "/api/cache-efficiency":
+                limit = _clamp_limit(qs.get("limit", ["15"])[0], 15)
+                return _send_json(self, {
+                    "by_prompt": cache_by_prompt(db_path, limit=limit, since=since, until=until),
+                    "by_skill":  cache_by_skill(db_path, since=since, until=until),
+                })
+            if path == "/api/project-daily":
+                return _send_json(self, project_daily(db_path, since, until))
+            if path == "/api/burn-moments":
+                limit = _clamp_limit(qs.get("limit", ["8"])[0], 8)
+                return _send_json(self, burn_moments(db_path, limit=limit, since=since, until=until))
             if path == "/api/skills":
                 rows = skill_breakdown(db_path, since, until)
                 catalog = cached_catalog()
