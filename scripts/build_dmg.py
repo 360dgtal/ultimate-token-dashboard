@@ -25,6 +25,17 @@ ICON     = ROOT / "web" / "assets" / "logo.png"
 PYTHON   = shutil.which("python3.12") or "/opt/homebrew/bin/python3.12"
 
 
+def _app_version() -> str:
+    """Single source of truth: _APP_VERSION in token_dashboard/server.py."""
+    import re
+    txt = (ROOT / "token_dashboard" / "server.py").read_text(encoding="utf-8")
+    m = re.search(r'_APP_VERSION\s*=\s*["\']([^"\']+)["\']', txt)
+    return m.group(1) if m else "0.0.0"
+
+
+VERSION = _app_version()
+
+
 def run(cmd, **kwargs):
     print(f"  $ {' '.join(str(c) for c in cmd)}")
     subprocess.run(cmd, check=True, **kwargs)
@@ -236,7 +247,7 @@ def report():
         ["git", "rev-list", "--count", "HEAD"],
         capture_output=True, text=True, check=True
     ).stdout.strip()
-    versioned = DIST / f"{APP_NAME}-v1.1.0-build{build_num}.dmg"
+    versioned = DIST / f"{APP_NAME}-v{VERSION}-build{build_num}.dmg"
     shutil.copy(str(dmg), str(versioned))
 
     print(f"\n  Output : {versioned}")
