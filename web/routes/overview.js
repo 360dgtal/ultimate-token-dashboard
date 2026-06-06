@@ -295,6 +295,32 @@ export default async function (root) {
     return { slug, name: nameBySlug[slug] || slug, spark, d30, d7, today, peak, active };
   }).sort((a, b) => b.d30 - a.d30).slice(0, 10);
 
+  // ── Scale equivalents (Fermi translations from exact totals) ────────────
+  const totalTokens =
+    (totals.input_tokens || 0) + (totals.output_tokens || 0) +
+    (totals.cache_read_tokens || 0) +
+    (totals.cache_create_5m_tokens || 0) + (totals.cache_create_1h_tokens || 0);
+  const _num = n => n == null ? '—'
+    : n >= 1000 ? fmt.compact(n)
+    : n >= 10   ? Math.round(n).toLocaleString()
+    : n.toFixed(1);
+  const words       = totalTokens * 0.75;
+  const queryEquiv  = totalTokens / 1000;
+  const equivalents = [
+    { measure: 'Text', estimate: `${_num(words)} words`,
+      equiv: `${_num(words / 90000)} paperback novels`,
+      basis: '≈0.75 words/token · 90k words/novel' },
+    { measure: 'Reading time', estimate: `${_num(words / 200 / 60)} hours`,
+      equiv: `${_num(words / 200 / 60 / 24)} days nonstop`,
+      basis: '200 words/min' },
+    { measure: 'Code volume', estimate: `${_num(totalTokens / 15)} lines`,
+      equiv: `${_num(totalTokens / 15 / 10000)} engineer-years`,
+      basis: '15 tokens/LOC · 10k net LOC/eng-yr' },
+    { measure: 'Energy', estimate: `${_num(queryEquiv * 0.34 / 1000)} kWh`,
+      equiv: `${_num(queryEquiv * 0.34 / 1000 / 0.012)} phone charges`,
+      basis: '0.34 Wh per 1k-token query-equiv · 12 Wh/charge' },
+  ];
+
   const kpi = (label, compactVal, fullVal, cls = '') => `
     <div class="card kpi ${cls}">
       <div class="label">${label}</div>
@@ -459,6 +485,23 @@ export default async function (root) {
               <td class="num">${a.active}</td>
               <td><div class="spark" id="spark-${i}"></div></td>
             </tr>`).join('') || '<tr><td colspan="7" class="muted">no activity in the last 30 days</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h3>Scale equivalents</h3>
+      <p class="muted" style="margin:-4px 0 10px;font-size:12px">Playful Fermi translations of the <b>${fmt.compact(totalTokens)}</b> tokens processed ${range.days ? `in the last ${range.days} days` : 'all-time'}. Illustrative scale only — not billing or environmental accounting.</p>
+      <table>
+        <thead><tr><th>measure</th><th>estimate</th><th>equivalent</th><th>basis</th></tr></thead>
+        <tbody>
+          ${equivalents.map(e => `
+            <tr>
+              <td>${e.measure}</td>
+              <td class="mono">${e.estimate}</td>
+              <td><b>${e.equiv}</b></td>
+              <td class="muted" style="font-size:11px">${e.basis}</td>
+            </tr>`).join('')}
         </tbody>
       </table>
     </div>
