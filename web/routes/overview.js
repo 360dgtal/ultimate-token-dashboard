@@ -336,7 +336,7 @@ export default async function (root) {
     <div class="greeting-banner">
       <div class="greeting-text">
         <span class="greeting-hi">Hi ${fmt.htmlSafe(displayName)}</span>
-        <span class="greeting-tagline">Take back control of your tokens.</span>
+        <span class="greeting-tagline">Take back control of your tokens :)</span>
       </div>
       <p class="greeting-sub">
         Increase your value per token spend across all versions of your connected Claude account${accountId ? ` (${fmt.htmlSafe(accountId)})` : ''}.
