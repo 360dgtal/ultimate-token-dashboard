@@ -6,17 +6,17 @@ import time
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-from .db import connect
+from .db import connect, _encode_slug
 
 
 INSERT_MSG = """
 INSERT OR REPLACE INTO messages (
-  uuid, parent_uuid, session_id, project_slug, cwd, git_branch, cc_version, entrypoint,
+  uuid, parent_uuid, session_id, project_slug, platform, cwd, git_branch, cc_version, entrypoint,
   type, is_sidechain, agent_id, timestamp, model, stop_reason, prompt_id, message_id,
   input_tokens, output_tokens, cache_read_tokens, cache_create_5m_tokens, cache_create_1h_tokens,
   prompt_text, prompt_chars, tool_calls_json
 ) VALUES (
-  :uuid, :parent_uuid, :session_id, :project_slug, :cwd, :git_branch, :cc_version, :entrypoint,
+  :uuid, :parent_uuid, :session_id, :project_slug, :platform, :cwd, :git_branch, :cc_version, :entrypoint,
   :type, :is_sidechain, :agent_id, :timestamp, :model, :stop_reason, :prompt_id, :message_id,
   :input_tokens, :output_tokens, :cache_read_tokens, :cache_create_5m_tokens, :cache_create_1h_tokens,
   :prompt_text, :prompt_chars, :tool_calls_json
@@ -122,7 +122,7 @@ def _extract_results(rec: dict) -> List[dict]:
     return out
 
 
-def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
+def parse_record(rec: dict, project_slug: str, platform: str = "claude-code") -> Tuple[dict, List[dict]]:
     """Return (message_row, [tool_call_rows]).
 
     Handles both standard Claude Code JSONL (camelCase keys, ``timestamp``)
@@ -135,6 +135,7 @@ def parse_record(rec: dict, project_slug: str) -> Tuple[dict, List[dict]]:
         "parent_uuid":  rec.get("parentUuid"),
         "session_id":   rec.get("sessionId") or rec.get("session_id"),
         "project_slug": project_slug,
+        "platform":     platform,
         "cwd":          rec.get("cwd"),
         "git_branch":   rec.get("gitBranch"),
         "cc_version":   rec.get("version"),
@@ -195,7 +196,7 @@ def _evict_prior_snapshots(conn, session_id: str, message_id: str,
 
 
 def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0,
-              session_id_override: str = None) -> dict:
+              session_id_override: str = None, platform: str = "claude-code") -> dict:
     """Ingest new lines from a JSONL file starting at ``start_byte``.
 
     Returns message/tool counts plus ``end_offset`` — the byte offset just
@@ -234,7 +235,7 @@ def scan_file(path: Path, project_slug: str, conn, start_byte: int = 0,
             if not isinstance(rec, dict) or "uuid" not in rec or "type" not in rec:
                 end_offset = line_end
                 continue
-            msg, tlist = parse_record(rec, project_slug)
+            msg, tlist = parse_record(rec, project_slug, platform)
             if session_id_override:
                 msg["session_id"] = session_id_override
                 for t in tlist:
@@ -357,5 +358,163 @@ def scan_dir(projects_root: Union[str, Path], db_path: Union[str, Path]) -> dict
             totals["messages"] += sub["messages"]
             totals["tools"]    += sub["tools"]
             totals["files"]    += 1
+        conn.commit()
+    return totals
+
+
+# ── Codex (OpenAI) rollout ingestion ─────────────────────────────────────────
+# GROUNDWORK / BEST-EFFORT. The OpenAI Codex CLI writes per-session transcripts
+# to ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl when actively used.
+# Each line is {"timestamp": ISO, "type": <kind>, "payload": {...}}. Usage lives
+# in `event_msg` records whose payload.type == "token_count". This reader is
+# inert until such files exist; it is verified against a synthetic fixture
+# (tests/test_codex_scanner.py) rather than live data, so treat the token
+# mapping below as best-effort until validated against a real rollout.
+
+_CODEX_DEFAULT = Path.home() / ".codex" / "sessions"
+
+
+def _codex_base_row(session_id: str, slug: str, cwd, model, ts: str, seq: int) -> dict:
+    """A messages-table row pre-filled with Codex defaults; deterministic uuid
+    (codex:<session>:<seq>) keeps full re-parses idempotent via INSERT OR REPLACE."""
+    return {
+        "uuid":         f"codex:{session_id}:{seq}",
+        "parent_uuid":  None,
+        "session_id":   session_id,
+        "project_slug": slug,
+        "platform":     "codex",
+        "cwd":          cwd,
+        "git_branch":   None,
+        "cc_version":   None,
+        "entrypoint":   "codex",
+        "type":         "user",
+        "is_sidechain": 0,
+        "agent_id":     None,
+        "timestamp":    ts,
+        "model":        model,
+        "stop_reason":  None,
+        "prompt_id":    None,
+        "message_id":   None,
+        "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+        "cache_create_5m_tokens": 0, "cache_create_1h_tokens": 0,
+        "prompt_text":  None, "prompt_chars": None, "tool_calls_json": None,
+    }
+
+
+def codex_rows(path: Path) -> List[dict]:
+    """Parse one Codex rollout JSONL into messages-table rows (best-effort).
+
+    Emits a 'user' row per user message item and an 'assistant' row per
+    token_count event (carrying that turn's last_token_usage). Assistant rows
+    link to the most recent user row so the prompt/cost joins keep working.
+    """
+    rows: List[dict] = []
+    session_id = path.stem  # fallback; overridden by session_meta if present
+    cwd = None
+    model = None
+    last_user_uuid = None
+    seq = 0
+    try:
+        fh = open(path, "r", encoding="utf-8", errors="replace")
+    except OSError:
+        return rows
+    with fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            kind = rec.get("type")
+            payload = rec.get("payload") or {}
+            ts = rec.get("timestamp") or ""
+
+            if kind == "session_meta":
+                session_id = payload.get("id") or session_id
+                cwd = payload.get("cwd") or cwd
+                continue
+            if kind == "turn_context":
+                model = payload.get("model") or model
+                cwd = payload.get("cwd") or cwd
+                continue
+
+            if kind == "response_item" and payload.get("type") == "message":
+                if payload.get("role") != "user":
+                    continue
+                parts = payload.get("content") or []
+                text = "".join(
+                    p.get("text", "") for p in parts
+                    if isinstance(p, dict) and p.get("type") in ("input_text", "text")
+                )
+                if not text:
+                    continue
+                slug = _encode_slug(cwd) if cwd else "codex"
+                row = _codex_base_row(session_id, slug, cwd, model, ts, seq); seq += 1
+                row["type"] = "user"
+                row["prompt_text"] = text
+                row["prompt_chars"] = len(text)
+                rows.append(row)
+                last_user_uuid = row["uuid"]
+                continue
+
+            if kind == "event_msg" and payload.get("type") == "token_count":
+                info = payload.get("info") or {}
+                u = info.get("last_token_usage") or info.get("total_token_usage") or {}
+                inp    = int(u.get("input_tokens") or 0)
+                cached = int(u.get("cached_input_tokens") or 0)
+                out    = int(u.get("output_tokens") or 0)
+                reason = int(u.get("reasoning_output_tokens") or 0)
+                if inp == 0 and out == 0 and cached == 0:
+                    continue
+                slug = _encode_slug(cwd) if cwd else "codex"
+                row = _codex_base_row(session_id, slug, cwd, model, ts, seq); seq += 1
+                row["type"] = "assistant"
+                row["parent_uuid"] = last_user_uuid
+                row["input_tokens"] = max(0, inp - cached)  # fresh (non-cached) input
+                row["cache_read_tokens"] = cached
+                row["output_tokens"] = out + reason          # reasoning billed as output
+                rows.append(row)
+                continue
+    return rows
+
+
+def scan_codex_dir(base: Union[str, Path] = None,
+                   db_path: Union[str, Path] = None) -> dict:
+    """Ingest OpenAI Codex rollout transcripts (platform='codex').
+
+    No-op when the sessions directory is absent — which is the case until the
+    user actually runs Codex. Incremental per file via the `files` table; on
+    change a rollout is fully re-parsed (deterministic uuids keep it idempotent).
+    """
+    base = Path(base) if base else _CODEX_DEFAULT
+    totals = {"messages": 0, "tools": 0, "files": 0}
+    if not base.is_dir():
+        return totals
+    with connect(db_path) as conn:
+        for p in base.rglob("rollout-*.jsonl"):
+            try:
+                stat = p.stat()
+            except OSError:
+                continue
+            row = conn.execute(
+                "SELECT mtime, bytes_read FROM files WHERE path=?", (str(p),)
+            ).fetchone()
+            if row and row["mtime"] == stat.st_mtime and row["bytes_read"] == stat.st_size:
+                continue
+            rows = codex_rows(p)
+            for msg in rows:
+                if not msg["session_id"] or not msg["timestamp"]:
+                    continue
+                conn.execute(INSERT_MSG, msg)
+                totals["messages"] += 1
+            conn.execute(
+                "INSERT OR REPLACE INTO files (path, mtime, bytes_read, scanned_at) VALUES (?, ?, ?, ?)",
+                (str(p), stat.st_mtime, stat.st_size, time.time()),
+            )
+            totals["files"] += 1
         conn.commit()
     return totals

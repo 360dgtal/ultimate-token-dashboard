@@ -10,7 +10,9 @@ Inspired by [phuryn/claude-usage](https://github.com/phuryn/claude-usage) but di
 
 ## Status
 
-Working codebase. 68 Python unit tests (`python3 -m unittest discover tests`). Seven UI tabs wired up (Overview, Prompts, Sessions, Projects, Skills, Tips, Settings). Runs on macOS, Windows, and Linux.
+Working codebase. 76 Python unit tests (`python3 -m unittest discover tests`). Seven UI tabs wired up (Overview, Prompts, Sessions, Projects, Skills, Tips, Settings). Runs on macOS, Windows, and Linux.
+
+Multi-platform groundwork is in place: `messages.platform` (default `claude-code`) plus a guarded Codex rollout reader (`scanner.scan_codex_dir`) that stays inert until `~/.codex/sessions/` has data. Its token mapping is best-effort, verified against a synthetic fixture (`tests/test_codex_scanner.py`) rather than live Codex data.
 
 ## Architecture
 

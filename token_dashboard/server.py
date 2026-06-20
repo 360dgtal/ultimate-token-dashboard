@@ -19,7 +19,7 @@ from .db import (
 )
 from .pricing import load_pricing, cost_for, get_plan, set_plan, fetch_rates
 from .tips import all_tips, dismiss_tip
-from .scanner import scan_dir, scan_cowork_dir
+from .scanner import scan_dir, scan_cowork_dir, scan_codex_dir
 from .skills import cached_catalog
 
 
@@ -378,6 +378,10 @@ def build_handler(db_path: str, projects_dir: str, cowork_dir=None):
                     cn = scan_cowork_dir(cowork_dir, db_path)
                     for k in n:
                         n[k] += cn[k]
+                # Codex rollouts (no-op until ~/.codex/sessions/ has data)
+                xn = scan_codex_dir(db_path=db_path)
+                for k in n:
+                    n[k] += xn[k]
                 return _send_json(self, n)
             if path == "/api/stream":
                 self.send_response(200)
@@ -445,6 +449,10 @@ def _scan_loop(db_path: str, projects_dir: str, cowork_dir=None, interval: float
                 icn = scan_dir(str(icloud), db_path)
                 for k in n:
                     n[k] += icn[k]
+            # Codex rollouts (no-op until ~/.codex/sessions/ has data)
+            xn = scan_codex_dir(db_path=db_path)
+            for k in n:
+                n[k] += xn[k]
             if n["messages"] > 0:
                 EVENTS.put({"type": "scan", "n": n, "ts": time.time()})
         except Exception as e:

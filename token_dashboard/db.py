@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS messages (
   parent_uuid             TEXT,
   session_id              TEXT NOT NULL,
   project_slug            TEXT NOT NULL,
+  platform                TEXT NOT NULL DEFAULT 'claude-code',
   cwd                     TEXT,
   git_branch              TEXT,
   cc_version              TEXT,
@@ -47,6 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_project   ON messages(project_slug);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_model     ON messages(model);
 CREATE INDEX IF NOT EXISTS idx_messages_msgid     ON messages(session_id, message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_platform  ON messages(platform);
 
 CREATE TABLE IF NOT EXISTS tool_calls (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +91,7 @@ def init_db(path: Union[str, Path]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as c:
         _migrate_add_message_id(c)
+        _migrate_add_platform(c)
         c.executescript(SCHEMA)
 
 
@@ -112,6 +115,27 @@ def _migrate_add_message_id(conn) -> None:
     conn.execute("DELETE FROM messages")
     conn.execute("DELETE FROM tool_calls")
     conn.execute("DELETE FROM files")
+    conn.commit()
+
+
+def _migrate_add_platform(conn) -> None:
+    """Add messages.platform for multi-platform support (Claude Code, Codex, …).
+
+    Why: existing rows are all Claude Code, so the column default is correct and
+    no rescan is needed — unlike the message_id migration, this is a pure
+    additive change with no data wipe.
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'"
+    ).fetchone()
+    if not has_table:
+        return
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "platform" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE messages ADD COLUMN platform TEXT NOT NULL DEFAULT 'claude-code'"
+    )
     conn.commit()
 
 
