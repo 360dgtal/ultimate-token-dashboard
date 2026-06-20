@@ -1,45 +1,47 @@
-# Token Dashboard
+# Ultimate Token Dashboard
 
-A local dashboard that reads the JSONL transcripts Claude Code writes to `~/.claude/projects/` and turns them into per-prompt cost analytics, tool/file heatmaps, subagent attribution, cache analytics, project comparisons, and a rule-based tips engine.
+A local dashboard that turns the JSONL transcripts Claude Code writes to `~/.claude/projects/` into per-prompt cost analytics, a daily burn heatmap, cache-efficiency analysis, burn-moment timelines, per-project activity, tool/file heatmaps, subagent attribution, and a rule-based tips engine.
 
 **Everything runs locally.** No data leaves your machine — no telemetry, no API calls for your data, no login.
 
-![Overview tab — totals and daily charts](docs/images/dashboard-overview-top.jpg)
+![Overview — greeting, KPIs, and the daily token-burn heatmap](docs/images/dashboard-overview-top.jpg)
 
-![Overview tab — per-project, per-model, top tools, recent sessions](docs/images/dashboard-overview-bottom.jpg)
+![Cache efficiency — reuse vs. rebuild, by project and by skill](docs/images/dashboard-overview-bottom.jpg)
 
-## What this is useful for
+## Install — two ways
 
-- Seeing which of your prompts are expensive (surprise: they usually involve large tool results).
-- Comparing token usage across projects you've worked on.
-- Spotting wasteful patterns — the same file read twenty times in a session, a tool call returning 80k tokens.
-- Understanding what a "cache hit" actually saves you.
-- If you're on Pro or Max, confirming you're getting your money's worth in API-equivalent dollars.
+### 1. Mac app (recommended — no Python, no Terminal)
 
-## Prerequisites
+**[⬇︎ Download the latest macOS app](https://github.com/360dgtal/ultimate-token-dashboard/releases/latest)** — grab the `.dmg` under the latest release.
 
-- **Python 3.8 or newer** — already installed on macOS and most Linux. On Windows: `winget install Python.Python.3.12` or download from python.org.
-- **Claude Code** — installed and with at least one session run. The dashboard reads those sessions. If you just installed Claude Code and haven't used it yet, run at least one prompt first.
-- **A web browser.** Any modern one.
+1. Open the `.dmg`, then **drag the app onto the Applications folder**.
+2. Open it from Applications.
+3. On first launch macOS may say it's from an "unidentified developer" — **right-click the app → Open → Open** once, and it'll launch normally from then on.
 
-No `pip install`. No Node.js. No build step.
+The app bundles its own Python runtime — **you do not need Python (or anything else) installed.** It scans your Claude Code sessions and opens the dashboard in its own window.
 
-## Quickstart
+> Why the right-click step? The app is ad-hoc signed, not yet Apple-notarized. The right-click → Open is a one-time macOS Gatekeeper approval; it isn't a Python or install problem.
+
+### 2. Run from source (any OS)
+
+If you'd rather run the Python directly (macOS / Linux / Windows):
 
 ```bash
-git clone https://github.com/nateherkai/token-dashboard.git
-cd token-dashboard
+git clone https://github.com/360dgtal/ultimate-token-dashboard.git
+cd ultimate-token-dashboard
 python3 cli.py dashboard
 ```
 
-> On Windows, if `python3` isn't on your PATH, substitute `py -3` for `python3` in every command below.
+Requires **Python 3.8+** (already on macOS and most Linux; on Windows `winget install Python.Python.3.12`). No `pip install`, no Node.js, no build step. On Windows substitute `py -3` for `python3`.
 
-The command:
-1. Scans `~/.claude/projects/` (first run can take 20–60 seconds on a heavy user's machine).
-2. Starts a local server at http://127.0.0.1:8080.
-3. Opens your default browser to that URL.
+## What this is useful for
 
-Leave it running; it re-scans every 30 seconds and pushes updates live. Stop with `Ctrl+C`.
+- Seeing which of your prompts are expensive (usually large tool results).
+- A **daily burn heatmap** + 30-day rolling average to spot your heavy days at a glance.
+- **Cache efficiency** — whether you worked against a warm cache or kept paying to rebuild it after `/clear` or 5-minute cache expiry, broken down by project, prompt, and skill.
+- **Burn moments** — your biggest spend days and what drove them.
+- Comparing token usage and activity across projects (with sparklines).
+- Cost in real money (GBP / USD / EUR) on your actual plan (API / Pro / Max).
 
 ## Where the data comes from
 
@@ -50,9 +52,9 @@ Claude Code writes one JSONL file per session here:
 | macOS / Linux | `~/.claude/projects/<project-slug>/<session-id>.jsonl` |
 | Windows | `C:\Users\<you>\.claude\projects\<project-slug>\<session-id>.jsonl` |
 
-The dashboard never modifies those files — it only reads them and keeps a local SQLite cache at `~/.claude/token-dashboard.db`.
+The dashboard never modifies those files — it only reads them and keeps a local SQLite cache at `~/.claude/token-dashboard.db`. It also reads Claude Desktop Cowork sessions where present, and has groundwork for OpenAI Codex (inert until `~/.codex/sessions/` has data).
 
-To point at a different location:
+To point at a different location (source mode):
 
 ```bash
 python3 cli.py dashboard --projects-dir /path/to/projects --db /path/to/cache.db
@@ -65,11 +67,24 @@ python3 cli.py dashboard --projects-dir /path/to/projects --db /path/to/cache.db
 | `PORT` | `8080` | Port the local web server listens on |
 | `HOST` | `127.0.0.1` | Bind address. Keep the default. Setting `0.0.0.0` exposes your entire prompt history to anyone on your local network — don't do this on any network you don't fully control (no coffee-shop Wi-Fi, no coworking spaces). |
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Where to scan for session JSONL files |
+| `CLAUDE_COWORK_DIR` | Claude Desktop default | Cowork `local-agent-mode-sessions` folder |
 | `TOKEN_DASHBOARD_DB` | `~/.claude/token-dashboard.db` | SQLite cache location |
 
 Pricing lives in [`pricing.json`](pricing.json). Edit it directly if model prices change or to add a new plan.
 
-## CLI reference
+## The tabs
+
+A single page with a hash-router tab bar. Each tab is backed by its own JSON API under `/api/`:
+
+- **Overview** — the landing tab: greeting, KPI cards, **daily burn heatmap**, daily total + **30-day rolling average** (with a log-scale toggle), **cache efficiency** (reuse vs. rebuild by project / prompt / skill), **burn moments**, **per-project activity sparklines**, tokens-by-project and -by-model, top tools, recent sessions, and **scale equivalents**.
+- **Prompts** — your most expensive prompts ranked by tokens; click a row for the response, tool calls, and per-result sizes.
+- **Sessions** — turn-by-turn view of a single session.
+- **Projects** — per-project comparison: tokens, sessions, files touched.
+- **Skills** — which skills you invoke most, and (where measurable) their token cost. See [limitations](docs/KNOWN_LIMITATIONS.md#skills-token-counts-are-partial).
+- **Tips** — rule-based suggestions for reducing token usage.
+- **Settings** — switch pricing between API / Pro / Max so cost figures reflect your plan; set display name; currency.
+
+## CLI reference (source mode)
 
 ```bash
 python3 cli.py scan          # populate / refresh the local DB, then exit
@@ -77,62 +92,43 @@ python3 cli.py today         # today's totals (terminal)
 python3 cli.py stats         # all-time totals (terminal)
 python3 cli.py tips          # active suggestions (terminal)
 python3 cli.py dashboard     # scan + serve the UI at http://localhost:8080
-
-# dashboard flags
 python3 cli.py dashboard --no-open   # don't auto-open the browser
-python3 cli.py dashboard --no-scan   # skip the initial scan (use cached DB only)
+python3 cli.py dashboard --no-scan   # skip the initial scan (cached DB only)
 ```
 
 Change the port: `PORT=9000 python3 cli.py dashboard`.
 
-## The 7 tabs
-
-The dashboard is a single page with a hash-router tab bar across the top. Each tab is backed by its own JSON API under `/api/`:
-
-- **Overview** — all-time input/output/cache tokens, sessions, turns, estimated cost on your chosen plan, daily work and cache-read charts, tokens-by-project, token share by model, top tools by call count, and recent sessions. This is the landing tab.
-- **Prompts** — your most expensive user prompts ranked by tokens. Click any row to see the assistant response, tool calls made, and the size of each tool result.
-- **Sessions** — turn-by-turn view of any single session, with per-turn tokens and tool calls.
-- **Projects** — per-project comparison: tokens, session counts, and which files were touched most.
-- **Skills** — which skills you invoke most often, and (where we can measure them) their token cost. See [limitations](docs/KNOWN_LIMITATIONS.md#skills-token-counts-are-partial).
-- **Tips** — rule-based suggestions for reducing token usage (repeated file reads, oversized tool results, low cache-hit rate, etc.).
-- **Settings** — switch pricing between API / Pro / Max / Max-20x so cost figures everywhere else reflect your actual plan.
-
-The Overview tab also has a built-in "What do these numbers mean?" panel that explains input/output/cache tokens in plain English.
-
 ## Troubleshooting
 
-**"No data" or empty charts.** Run `python3 cli.py scan` once to populate the DB, then reload.
+**"unidentified developer" / "damaged" on first launch.** Right-click the app → Open → Open (one-time Gatekeeper approval). This is not a Python problem — the app is self-contained.
+
+**"No data" or empty charts.** Run a Claude Code session first, then click Refresh (or `python3 cli.py scan` in source mode).
 
 **Port 8080 already in use.** `PORT=9000 python3 cli.py dashboard`.
 
-**Numbers look wrong / stuck.** The DB lives at `~/.claude/token-dashboard.db`. Delete it and re-run `python3 cli.py scan` to rebuild from scratch.
-
-**Running the dashboard twice at the same time.** Don't — both processes will fight over the SQLite DB. Stop all instances before starting a new one.
+**Numbers look wrong / stuck.** Delete `~/.claude/token-dashboard.db` and re-scan to rebuild from scratch.
 
 ## Accuracy note
 
-Claude Code writes each assistant response 2–3 times to disk while it streams (the same API message gets snapshotted as output grows). The dashboard dedupes these by `message.id` so the final tally matches what the API actually billed. If you compare against another tool that sums every JSONL row, expect this dashboard's numbers to be lower — and closer to reality.
+Claude Code writes each assistant response 2–3 times to disk while it streams. The dashboard dedupes these by `message.id` so the final tally matches what the API actually billed. Tools that sum every JSONL row will report higher (less accurate) numbers.
 
 ## Privacy
 
-Nothing leaves your machine. No telemetry. No remote calls for your data. The browser fetches its JSON from `127.0.0.1`, and all JS/CSS/fonts are served from that same local server — ECharts is vendored into `web/`, and the UI falls back to system fonts rather than pulling from a font CDN. If you want to verify: `grep -r "https://" token_dashboard/ web/` — you'll find nothing.
+Nothing leaves your machine. No telemetry, no remote calls for your data. The UI fetches JSON from `127.0.0.1` and all JS/CSS/fonts are served locally (ECharts is vendored into `web/`). Press `Cmd/Ctrl + B` anywhere to blur sensitive text for screenshots. Verify with `grep -r "https://" token_dashboard/ web/`.
 
 ## Tech stack
 
-Python 3 (stdlib only) for the CLI, scanner, and HTTP server. SQLite for the local cache. Vanilla JS + ECharts for the UI, no build step. Dark theme, hash-based router, server-sent events for live refresh.
+Python 3 (stdlib only) for the CLI, scanner, and HTTP server; SQLite for the local cache; vanilla JS + ECharts for the UI (no build step); SSE for live refresh. The Mac app is packaged with PyInstaller, bundling the Python runtime so end users need nothing installed.
 
-Data flow: `cli.py` → `token_dashboard/scanner.py` → SQLite DB; `token_dashboard/server.py` exposes `/api/*` JSON routes and serves `web/`.
+Data flow: `cli.py` → `token_dashboard/scanner.py` → SQLite DB; `token_dashboard/server.py` exposes `/api/*` and serves `web/`.
 
 ## Further reading
 
-- [`CLAUDE.md`](CLAUDE.md) — conventions and architecture overview (also picked up automatically by Claude Code)
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to develop and test
+- [`CLAUDE.md`](CLAUDE.md) — conventions and architecture
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — backlog and milestone notes
 - [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) — rough edges
-- [`docs/inspiration.md`](docs/inspiration.md) — prior art and how this project diverges
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Short version: fork, `python3 -m unittest discover tests` before opening a PR, keep it stdlib-only.
+- [`docs/COMPETITOR_ANALYSIS.md`](docs/COMPETITOR_ANALYSIS.md) — feature comparison
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — develop and test
 
 ## License
 
