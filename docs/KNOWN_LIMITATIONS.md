@@ -27,3 +27,14 @@ The first `python3 cli.py scan` on a heavy user's machine can read tens of MB ac
 ## Running two dashboards against the same DB
 
 Both will fight over the SQLite file and you'll see inconsistent numbers and occasional `database is locked` errors. Only run one at a time. If you want to view the dashboard from a second device, use `HOST=0.0.0.0` on the one running machine and point the second device's browser at it.
+
+## Codex ingestion is groundwork-only (and subagent replays would inflate)
+
+`scanner.scan_codex_dir` reads OpenAI Codex rollout JSONL (`~/.codex/sessions/`)
+but stays inert until those files exist; the token mapping is verified against a
+synthetic fixture, not live data. Two caveats to resolve before Codex is
+surfaced in the UI: (1) Codex `token_count` totals are cumulative — we diff them
+per turn, which is correct only if events arrive in order; (2) when Codex spawns
+subagents via `thread_spawn`, the subagent rollout replays the parent's full
+token history re-timestamped, which can inflate totals ~91× (openai/codex,
+ccusage#950). We don't yet detect/skip those replays.

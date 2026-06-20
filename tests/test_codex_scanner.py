@@ -80,6 +80,28 @@ class CodexScannerTests(unittest.TestCase):
         rows = codex_rows(__import__("pathlib").Path(self.rollout))
         self.assertEqual(len(rows), 2)
 
+    def test_cumulative_totals_are_diffed(self):
+        """token_count totals are cumulative — without last_token_usage we must
+        diff successive events, not sum them (else massive overcount)."""
+        from pathlib import Path
+        rollout = "\n".join([
+            '{"timestamp":"2026-05-01T10:00:00Z","type":"session_meta","payload":{"id":"s-cum","cwd":"/tmp/p"}}',
+            # event 1: cumulative total 100 in / 60 out
+            '{"timestamp":"2026-05-01T10:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":60,"reasoning_output_tokens":0}}}}',
+            # event 2: cumulative total 250 in / 130 out  -> turn delta = 150 in / 70 out
+            '{"timestamp":"2026-05-01T10:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":0,"output_tokens":130,"reasoning_output_tokens":0}}}}',
+        ]) + "\n"
+        d = os.path.join(self.tmp, "cum"); os.makedirs(d)
+        fp = os.path.join(d, "rollout-cum.jsonl")
+        with open(fp, "w", encoding="utf-8") as f:
+            f.write(rollout)
+        rows = codex_rows(Path(fp))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["input_tokens"], 100)
+        self.assertEqual(rows[0]["output_tokens"], 60)
+        self.assertEqual(rows[1]["input_tokens"], 150)  # 250-100, not 250
+        self.assertEqual(rows[1]["output_tokens"], 70)  # 130-60
+
 
 class PlatformMigrationTests(unittest.TestCase):
     def test_adds_platform_column_without_wipe(self):

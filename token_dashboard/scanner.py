@@ -405,8 +405,21 @@ def codex_rows(path: Path) -> List[dict]:
     """Parse one Codex rollout JSONL into messages-table rows (best-effort).
 
     Emits a 'user' row per user message item and an 'assistant' row per
-    token_count event (carrying that turn's last_token_usage). Assistant rows
-    link to the most recent user row so the prompt/cost joins keep working.
+    token_count event (carrying that turn's usage). Assistant rows link to the
+    most recent user row so the prompt/cost joins keep working.
+
+    Usage handling (verified against the documented Codex format):
+      - token_count.info.total_token_usage is CUMULATIVE across the session; we
+        prefer the per-call last_token_usage and otherwise diff against the
+        previous total to recover this turn's delta (summing totals overcounts).
+      - Fields: input_tokens (includes cached), cached_input_tokens,
+        output_tokens, reasoning_output_tokens. We map fresh input = input -
+        cached, cache_read = cached, output = output + reasoning.
+
+    KNOWN LIMITATION: when Codex spawns subagents (thread_spawn), the subagent's
+    rollout replays the parent's full token history re-timestamped, which can
+    inflate totals ~91x (openai/codex; ccusage#950). We do not yet detect/skip
+    those replays — to be addressed against real data before Codex is surfaced.
     """
     rows: List[dict] = []
     session_id = path.stem  # fallback; overridden by session_meta if present
@@ -414,6 +427,7 @@ def codex_rows(path: Path) -> List[dict]:
     model = None
     last_user_uuid = None
     seq = 0
+    prev = {"input": 0, "cached": 0, "output": 0, "reasoning": 0}  # cumulative tracker
     try:
         fh = open(path, "r", encoding="utf-8", errors="replace")
     except OSError:
@@ -463,11 +477,27 @@ def codex_rows(path: Path) -> List[dict]:
 
             if kind == "event_msg" and payload.get("type") == "token_count":
                 info = payload.get("info") or {}
-                u = info.get("last_token_usage") or info.get("total_token_usage") or {}
-                inp    = int(u.get("input_tokens") or 0)
-                cached = int(u.get("cached_input_tokens") or 0)
-                out    = int(u.get("output_tokens") or 0)
-                reason = int(u.get("reasoning_output_tokens") or 0)
+                last = info.get("last_token_usage")
+                total = info.get("total_token_usage") or {}
+                if last:
+                    inp    = int(last.get("input_tokens") or 0)
+                    cached = int(last.get("cached_input_tokens") or 0)
+                    out    = int(last.get("output_tokens") or 0)
+                    reason = int(last.get("reasoning_output_tokens") or 0)
+                else:
+                    # No per-call usage — diff the cumulative total against the
+                    # previous event to recover this turn's delta.
+                    inp    = max(0, int(total.get("input_tokens") or 0)            - prev["input"])
+                    cached = max(0, int(total.get("cached_input_tokens") or 0)     - prev["cached"])
+                    out    = max(0, int(total.get("output_tokens") or 0)           - prev["output"])
+                    reason = max(0, int(total.get("reasoning_output_tokens") or 0) - prev["reasoning"])
+                if total:  # advance cumulative tracker whenever totals are present
+                    prev = {
+                        "input":     int(total.get("input_tokens")            or prev["input"]),
+                        "cached":    int(total.get("cached_input_tokens")     or prev["cached"]),
+                        "output":    int(total.get("output_tokens")          or prev["output"]),
+                        "reasoning": int(total.get("reasoning_output_tokens") or prev["reasoning"]),
+                    }
                 if inp == 0 and out == 0 and cached == 0:
                     continue
                 slug = _encode_slug(cwd) if cwd else "codex"
