@@ -59,7 +59,7 @@ _ICLOUD_PROJ = str(
     / "com~apple~CloudDocs" / "claude-projects"
 )
 
-_APP_VERSION = "1.2.0"
+_APP_VERSION = "1.2.1"
 _UPDATE_CACHE: dict = {"ts": 0.0, "data": None}
 _UPDATE_TTL = 3600  # 1 hour
 
